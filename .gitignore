@@ -1,0 +1,33 @@
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Generated simulation data and diagnostics
+*.npy
+*.npz
+*.pt
+*.pth
+*.ckpt
+*.csv
+*.log
+*.out
+*.err
+*.pdf
+*.png
+*.jpg
+*.jpeg
+
+# Workflow output directories
+**/logs/*
+**/artifacts/models/*
+
+# Bash scripts
+**/sub*.sh
+
+# Keep empty workflow directories tracked
+!**/.gitkeep
