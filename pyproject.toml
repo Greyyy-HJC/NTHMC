@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nthmc"
+version = "0.1.0"
+description = "Neural transformed Hybrid Monte Carlo research workflows."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch",
+    "lightning",
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "tqdm",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

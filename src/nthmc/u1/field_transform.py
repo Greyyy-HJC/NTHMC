@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm
 
-from nthmc.common.u1_observables import (
+from nthmc.u1.u1_observables import (
     format_beta,
     get_field_mask,
     get_plaq_mask,
@@ -22,7 +22,7 @@ from nthmc.common.u1_observables import (
     plaq_from_field_batch,
     rect_from_field_batch,
 )
-from nthmc.models import choose_model
+from nthmc.u1.models import choose_model
 
 
 class FieldTransformation:
@@ -60,6 +60,8 @@ class FieldTransformation:
         self.print = fabric.print if fabric is not None else print
         self.backward = fabric.backward if fabric is not None else torch.autograd.backward
 
+        # These defaults match the baseline FT-HMC training setup; callers can override
+        # individual values without changing the checkpoint or plotting paths.
         self.hyperparams = {
             "init_std": 0.001,
             "lr": 0.001,
@@ -70,10 +72,14 @@ class FieldTransformation:
         if hyperparams:
             self.hyperparams.update(hyperparams)
 
+        # The transformation is composed of one small CNN per checkerboard-like link subset.
+        # Each model predicts the local plaquette and rectangle coefficients for its subset.
         model_cls = choose_model(model_tag)
         raw_models = nn.ModuleList([model_cls().to(self.device) for _ in range(n_subsets)])
 
         if identity_init:
+            # Small coefficients make the initial map close to theta -> theta, which keeps
+            # early inverse iterations and Jacobian estimates stable.
             for model in raw_models:
                 for param in model.parameters():
                     nn.init.normal_(param, mean=0.0, std=self.hyperparams["init_std"])
@@ -114,6 +120,7 @@ class FieldTransformation:
         plaq_mask = get_plaq_mask(index, batch_size, self.lattice_size, self.device)
         rect_mask = get_rect_mask(index, batch_size, self.lattice_size, self.device)
 
+        # Only the loops affected by the active link subset are visible to this coupling layer.
         plaq_masked = plaq * plaq_mask
         rect_masked = rect * rect_mask
         plaq_features = torch.stack([torch.sin(plaq_masked), torch.cos(plaq_masked)], dim=1)
@@ -127,6 +134,7 @@ class FieldTransformation:
         rect0 = rect[:, 0]
         rect1 = rect[:, 1]
 
+        # Four plaquette derivatives contribute to the two link directions.
         sin_plaq_stack = torch.stack(
             [
                 -torch.sin(plaq),
@@ -143,6 +151,7 @@ class FieldTransformation:
             dim=1,
         )
 
+        # Each link participates in eight oriented 1x2 / 2x1 rectangles.
         rect_angles = torch.stack(
             [
                 torch.roll(rect0, shifts=1, dims=1),
@@ -249,6 +258,8 @@ class FieldTransformation:
                 dim=1,
             ) * field_mask
 
+            # For this triangular coupling layer, the local Jacobian is diagonal on the
+            # active links, so the log determinant is the sum of log local shifts.
             log_det = log_det + torch.log(1 + plaq_jac_shift + rect_jac_shift).sum(dim=(1, 2, 3))
             theta_curr = theta_curr + self.ft_phase(theta_curr, index)
 

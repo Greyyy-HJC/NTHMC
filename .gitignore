@@ -1,6 +1,7 @@
 # Python caches and local environments
 __pycache__/
 *.py[cod]
+*.egg-info/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -13,11 +14,9 @@ venv/
 *.pt
 *.pth
 *.ckpt
-*.csv
 *.log
 *.out
 *.err
-*.pdf
 *.png
 *.jpg
 *.jpeg
@@ -28,6 +27,10 @@ venv/
 
 # Bash scripts
 **/sub*.sh
+
+# Agent files
+.codex
+.claude/
 
 # Keep empty workflow directories tracked
 !**/.gitkeep

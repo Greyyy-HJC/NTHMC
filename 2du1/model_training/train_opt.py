@@ -15,7 +15,7 @@ from lightning.fabric import Fabric
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from nthmc.u1.field_transform import FieldTransformation
+from nthmc.u1.field_transform_opt import FieldTransformation
 from nthmc.u1.u1_observables import format_beta, set_seed
 
 

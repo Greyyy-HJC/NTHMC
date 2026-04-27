@@ -12,9 +12,9 @@ import torch
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from nthmc.common.plotting import hmc_summary
-from nthmc.common.u1_observables import format_beta, set_seed
-from nthmc.workflows.u1_hmc import HMCU1
+from nthmc.u1.plotting import hmc_summary
+from nthmc.u1.u1_observables import format_beta, set_seed
+from nthmc.u1.u1_hmc import HMCU1
 
 
 def choose_device(device: str) -> str:

@@ -9,17 +9,17 @@ NTHMC studies neural transformed Hybrid Monte Carlo methods for:
 - `2du1`: 2D U(1) lattice gauge theory
 - `2du2`: 2D U(2) lattice gauge theory
 
-The repository uses a shared-core layout. Common implementation belongs in `src/nthmc`, while physics-system workspaces keep configs, generated outputs, logs, plots, and trained models separate.
+The repository uses a shared-core layout. Common implementation belongs in `src/nthmc/core`, while physics-system workspaces keep configs, generated outputs, logs, plots, and trained models separate. Python package names use `u1` and `u2` for importability; they correspond to the top-level `2du1` and `2du2` workspaces.
 
 ## Top-Level Structure
 
 ```text
 2du1/                  # U(1)-specific configs, workflows, and outputs
 2du2/                  # U(2)-specific configs, workflows, and outputs
-src/nthmc/common/      # Shared U(1) observables and plotting helpers
-src/nthmc/workflows/   # Standard HMC and FT-HMC workflow classes
-src/nthmc/models.py    # Base CNN model
-src/nthmc/field_transform.py # Base neural field transformation
+src/nthmc/core/        # Shared helpers independent of a physics system
+src/nthmc/u1/          # U(1) observables, models, transformations, and samplers
+src/nthmc/u2/          # U(2) package placeholder for future implementation
+pyproject.toml         # Setuptools package metadata for editable installs
 tests/                 # Future tests
 notebooks/             # Future notebooks
 ```
@@ -54,5 +54,5 @@ The U(2) workspace is structural only for now. Add U(2)-specific implementations
 - Do not add many top-level evaluation variants.
 - Put model-specific evaluation variants under `2du*/evaluation/<variant>/`.
 - Keep large generated files, checkpoints, logs, and plots out of source-oriented directories.
-- Keep shared implementation in `src/nthmc`; workflow scripts should be thin CLI wrappers.
+- Keep shared implementation in `src/nthmc/core`; workflow scripts should be thin CLI wrappers.
 - Store generated gauge arrays in `2du*/configs`, not workflow `dumps` or a separate `data` tree.

@@ -1,2 +1,1 @@
-"""Shared code for the NTHMC research workflows."""
-
+"""NTHMC research workflow package."""

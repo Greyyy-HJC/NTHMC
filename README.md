@@ -15,7 +15,8 @@ This repository is organized as a cleaned-up successor structure inspired by `Sc
 NTHMC/
 ├── 2du1/                  # 2D U(1) project area
 ├── 2du2/                  # 2D U(2) project area
-├── src/nthmc/             # Shared Python package
+├── src/nthmc/             # Python package: core, u1, and u2 modules
+├── pyproject.toml         # Editable-install package metadata
 ├── tests/                 # Future tests
 ├── notebooks/             # Future exploratory notebooks
 ├── README.md              # Human-facing overview
@@ -43,10 +44,12 @@ The current runnable baseline covers the 2D U(1) base model pipeline. Install th
 
 ```bash
 cd /eagle/fthmc/run/NTHMC
-pip install -r requirements.txt
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
 ```
 
-Use `PYTHONPATH=src` when importing the shared package outside the provided workflow scripts.
+For environments where editable installs are not available, `pip install -r requirements.txt` plus `PYTHONPATH=src` is still sufficient for direct source-tree imports.
 
 ## 2D U(1) Base Workflow
 
@@ -71,7 +74,7 @@ Generated gauge arrays live in `2du1/configs`, trained checkpoints live in `2du1
 
 ## Current Scope
 
-Shared implementation should live in `src/nthmc`, with system-specific configuration and outputs kept under `2du1` or `2du2`.
+Shared implementation should live in `src/nthmc/core`. U(1)-specific implementation lives in `src/nthmc/u1`, and `src/nthmc/u2` is reserved for future U(2)-specific code. System-specific configuration and outputs stay under `2du1` or `2du2`.
 
 The U(2) workspace is present but not implemented yet; the reference project only provided the U(1) flow.
 

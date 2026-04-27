@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from nthmc.common.u1_observables import plaq_from_field, plaq_mean_from_field, regularize, topo_from_field
+from nthmc.u1.u1_observables import plaq_from_field, plaq_mean_from_field, regularize, topo_from_field
 
 
 class HMCU1:
