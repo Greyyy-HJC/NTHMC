@@ -11,3 +11,5 @@ This is an append-only development history for NTHMC.
 - Reorganized reusable Python code into `nthmc.core`, `nthmc.u1`, and `nthmc.u2`, with editable-install metadata in `pyproject.toml`.
 - Added the U(1) add-cos optimized transformation path and corresponding model-training/evaluation entry points.
 - Kept generated arrays, checkpoints, logs, plots, and diagnostics out of source-oriented directories with `.gitignore` coverage.
+- Replaced the `2du2` SU(2) placeholder with U(2) complex-matrix standard HMC gauge generation, diagnostics, docs, and focused tests.
+- Changed U(2) gauge generation internals to a split U(1) phase plus SU(2) quaternion representation while preserving complex-matrix config output.

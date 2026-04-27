@@ -44,6 +44,7 @@ Turn tasks into verifiable outcomes.
 
 ## Workflow Hygiene
 
+- Use the repository `.venv` environment for Python commands, tests, and scripts.
 - Before each `git add` and `git commit`, check whether `.gitignore` needs to be updated.
 - After each meaningful implementation pass, check whether `PROJECT_LOG.md` should be updated.
 - Keep generated arrays, logs, plots, and checkpoints out of source-oriented directories.

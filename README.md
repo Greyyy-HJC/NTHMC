@@ -72,11 +72,79 @@ python compare_fthmc.py --lattice_size 8 --beta 3.0 --train_beta 3.0 --n_configs
 
 Generated gauge arrays live in `2du1/configs`, trained checkpoints live in `2du1/artifacts/models`, and plots/CSV diagnostics stay under workflow-local `plots` and `dumps` directories.
 
+For U(1), links are stored as compact angles `theta_{x,mu}`. The local plaquette angle is
+
+```text
+theta_{x,01} = theta_{x,0} - theta_{x,1} - theta_{x+hat{1},0} + theta_{x+hat{0},1},
+```
+
+wrapped to `[-pi, pi)`. Diagnostics use the local plaquette
+
+```text
+p_x = cos(theta_{x,01})
+```
+
+and its volume average `<p> = (1 / V) sum_x p_x`. The HMC implementation uses the Wilson action without the additive constant,
+
+```text
+S_E = - beta * sum_x cos(theta_{x,01}).
+```
+
+This differs from `beta * sum_x (1 - cos(theta_{x,01}))` only by the constant `beta * V`, so it gives the same HMC dynamics and Metropolis decisions. The infinite-volume 2D U(1) theoretical plaquette is
+
+```text
+<p> = I_1(beta) / I_0(beta).
+```
+
+## 2D U(2) Gauge Generation
+
+The implemented U(2) path currently covers standard HMC gauge generation. Internally each link is represented as
+
+```text
+U_{x,mu} = exp(i phi_{x,mu}) S_{x,mu},  S_{x,mu} in SU(2),
+```
+
+where `phi` is a real phase angle and `S` is stored as an SU(2) unit quaternion. Generated configurations are exported as complex `2x2` matrices.
+
+For a plaquette matrix `P_{x,01}`, the local normalized real plaquette is
+
+```text
+p_x = (1 / 2) ReTr(P_{x,01}).
+```
+
+Diagnostics record the volume average
+
+```text
+<p> = (1 / V) sum_x p_x.
+```
+
+The HMC action is the Wilson gauge action
+
+```text
+S_E = (beta / N_c) sum_x ReTr(1 - P_{x,01}),  N_c = 2
+    = beta * sum_x (1 - p_x)
+    = beta * V * (1 - <p>).
+```
+
+The plotted theoretical plaquette is the 2D U(2) one-plaquette result for this normalization. With `x = beta / 2` and modified Bessel functions `I_n`,
+
+```text
+Z_U2 = I_0(x)^2 - I_1(x)^2
+<p> = I_1(x) * (I_0(x) - I_2(x)) / (2 * Z_U2).
+```
+
+```bash
+cd /eagle/fthmc/run/NTHMC/2du2/gauge_generation
+python generate.py --lattice_size 8 --beta 3.0 --n_configs 32 --n_thermalization 20 --n_steps 4 --no_tune_step_size
+```
+
+Generated U(2) gauge arrays live in `2du2/configs` with shape `[N, 2, L, L, 2, 2]`, while plots and CSV diagnostics stay under `2du2/gauge_generation`.
+
 ## Current Scope
 
-Shared implementation should live in `src/nthmc/core`. U(1)-specific implementation lives in `src/nthmc/u1`, and `src/nthmc/u2` is reserved for future U(2)-specific code. System-specific configuration and outputs stay under `2du1` or `2du2`.
+Shared implementation should live in `src/nthmc/core`. U(1)-specific implementation lives in `src/nthmc/u1`, and U(2)-specific implementation lives in `src/nthmc/u2`. System-specific configuration and outputs stay under `2du1` or `2du2`.
 
-The U(2) workspace is present but not implemented yet; the reference project only provided the U(1) flow.
+The U(2) workspace currently implements gauge generation. U(2) model training and evaluation are not implemented yet.
 
 ## License
 

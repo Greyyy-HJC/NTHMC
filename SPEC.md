@@ -18,7 +18,7 @@ The repository uses a shared-core layout. Common implementation belongs in `src/
 2du2/                  # U(2)-specific configs, workflows, and outputs
 src/nthmc/core/        # Shared helpers independent of a physics system
 src/nthmc/u1/          # U(1) observables, models, transformations, and samplers
-src/nthmc/u2/          # U(2) package placeholder for future implementation
+src/nthmc/u2/          # U(2) observables and samplers
 pyproject.toml         # Setuptools package metadata for editable installs
 tests/                 # Future tests
 notebooks/             # Future notebooks
@@ -46,7 +46,11 @@ Implemented U(1) base-model entry points:
 - `2du1/model_training/train.py`: train the base neural field transformation from generated gauges with Lightning Fabric DDP.
 - `2du1/evaluation/base/compare_fthmc.py`: evaluate a trained base transformation with FT-HMC.
 
-The U(2) workspace is structural only for now. Add U(2)-specific implementations only after the representation, action, observables, and model interface are defined.
+Implemented U(2) entry points:
+
+- `2du2/gauge_generation/generate.py`: generate U(2) gauge configurations with standard HMC.
+
+The U(2) implementation currently covers gauge generation only. Internally it stores links as a U(1) phase plus an SU(2) unit quaternion and exports generated configs as complex `2x2` matrices. Model training and FT-HMC evaluation remain future work.
 
 ## Important Rules
 
