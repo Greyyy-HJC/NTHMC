@@ -15,6 +15,7 @@ dependencies = [
     "scipy",
     "matplotlib",
     "tqdm",
+    "gvar",
 ]
 
 [tool.setuptools.packages.find]

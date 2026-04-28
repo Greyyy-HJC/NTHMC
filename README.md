@@ -18,7 +18,7 @@ NTHMC/
 ├── src/nthmc/             # Python package: core, u1, and u2 modules
 ├── pyproject.toml         # Editable-install package metadata
 ├── tests/                 # Future tests
-├── notebooks/             # Future exploratory notebooks
+├── presentation/          # Result presentation notebooks and plots
 ├── README.md              # Human-facing overview
 ├── SPEC.md                # Structural project map
 ├── AGENTS.md              # Agent workflow rules
@@ -33,6 +33,7 @@ configs/
 gauge_generation/{dumps,logs,plots}
 model_training/{dumps,logs,plots}
 evaluation/base/{dumps,logs,plots,scripts}
+evaluation/hmc/{dumps,logs,plots}
 artifacts/models
 ```
 
@@ -40,7 +41,7 @@ Only `evaluation/base/` is included as the canonical evaluation example. Additio
 
 ## Setup
 
-The current runnable baseline covers the 2D U(1) base model pipeline. Install the lightweight Python dependencies with:
+The current runnable baselines cover the 2D U(1) and U(2) base model pipelines. Install the lightweight Python dependencies with:
 
 ```bash
 cd /eagle/fthmc/run/NTHMC
@@ -96,9 +97,9 @@ This differs from `beta * sum_x (1 - cos(theta_{x,01}))` only by the constant `b
 <p> = I_1(beta) / I_0(beta).
 ```
 
-## 2D U(2) Gauge Generation
+## 2D U(2) Base Workflow
 
-The implemented U(2) path currently covers standard HMC gauge generation. Internally each link is represented as
+The implemented U(2) path covers standard HMC gauge generation, base model training, and FT-HMC evaluation. Internally each link is represented as
 
 ```text
 U_{x,mu} = exp(i phi_{x,mu}) S_{x,mu},  S_{x,mu} in SU(2),
@@ -138,13 +139,21 @@ cd /eagle/fthmc/run/NTHMC/2du2/gauge_generation
 python generate.py --lattice_size 8 --beta 3.0 --n_configs 32 --n_thermalization 20 --n_steps 4 --no_tune_step_size
 ```
 
-Generated U(2) gauge arrays live in `2du2/configs` with shape `[N, 2, L, L, 2, 2]`, while plots and CSV diagnostics stay under `2du2/gauge_generation`.
+```bash
+cd /eagle/fthmc/run/NTHMC/2du2/model_training
+torchrun --standalone --nproc_per_node=1 train.py --lattice_size 8 --min_beta 3.0 --max_beta 3.0 --beta_gap 1.0 --n_epochs 1 --batch_size 8 --if_identity_init
+```
+
+```bash
+cd /eagle/fthmc/run/NTHMC/2du2/evaluation/base
+python compare_fthmc.py --lattice_size 8 --beta 3.0 --train_beta 3.0 --n_configs 32 --n_thermalization 20 --n_steps 4 --save_tag base_train_b3.0_L8_1331 --no_tune_step_size
+```
+
+Generated U(2) gauge arrays live in `2du2/configs` with shape `[N, 2, L, L, 2, 2]`. Training converts those matrices to the internal split phase/quaternion representation on load. Trained checkpoints live in `2du2/artifacts/models`, and plots/CSV diagnostics stay under workflow-local `plots` and `dumps` directories.
 
 ## Current Scope
 
 Shared implementation should live in `src/nthmc/core`. U(1)-specific implementation lives in `src/nthmc/u1`, and U(2)-specific implementation lives in `src/nthmc/u2`. System-specific configuration and outputs stay under `2du1` or `2du2`.
-
-The U(2) workspace currently implements gauge generation. U(2) model training and evaluation are not implemented yet.
 
 ## License
 

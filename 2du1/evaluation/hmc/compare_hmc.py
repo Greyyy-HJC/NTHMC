@@ -1,0 +1,115 @@
+"""Evaluate standard HMC for 2D U(1)."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+import torch
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPO_ROOT / "src"))
+
+from nthmc.u1.plotting import hmc_summary
+from nthmc.u1.u1_hmc import HMCU1
+from nthmc.u1.u1_observables import format_beta, set_seed
+
+
+def choose_device(device: str) -> str:
+    if device == "auto":
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    return device
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Evaluate standard HMC for 2D U(1)")
+    parser.add_argument("--lattice_size", type=int, default=16)
+    parser.add_argument("--n_configs", type=int, default=2048)
+    parser.add_argument("--beta", type=float, default=6.0)
+    parser.add_argument("--n_thermalization", type=int, default=2000)
+    parser.add_argument("--n_steps", type=int, default=10)
+    parser.add_argument("--step_size", type=float, default=0.1)
+    parser.add_argument("--n_tune_steps", type=int, default=1000)
+    parser.add_argument("--max_lag", type=int, default=200)
+    parser.add_argument("--rand_seed", type=int, default=1331)
+    parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"])
+    parser.add_argument("--no_tune_step_size", action="store_true")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    device = choose_device(args.device)
+    torch.set_default_dtype(torch.float32)
+    set_seed(args.rand_seed)
+
+    script_dir = Path(__file__).resolve().parent
+    plot_dir = script_dir / "plots"
+    dump_dir = script_dir / "dumps"
+    for directory in (plot_dir, dump_dir):
+        directory.mkdir(parents=True, exist_ok=True)
+
+    print("=" * 60)
+    print(">>> U(1) standard HMC evaluation")
+    for key, value in vars(args).items():
+        print(f"{key}: {value}")
+    print(f"resolved_device: {device}")
+    print("=" * 60)
+
+    hmc = HMCU1(
+        args.lattice_size,
+        args.beta,
+        args.n_thermalization,
+        args.n_steps,
+        args.step_size,
+        device=device,
+        tune_step_size=not args.no_tune_step_size,
+    )
+
+    therm_start = time.time()
+    theta_thermalized, therm_plaq, therm_acceptance_rate = hmc.thermalize(n_tune_steps=args.n_tune_steps)
+    therm_time = time.time() - therm_start
+    print(f">>> HMC thermalization completed in {therm_time:.2f} seconds")
+
+    run_start = time.time()
+    _, plaq, acceptance_rate, topo, hamiltonians = hmc.run(args.n_configs, theta_thermalized, save_config=False)
+    run_time = time.time() - run_start
+    print(f">>> HMC run completed in {run_time:.2f} seconds")
+
+    beta_tag = format_beta(args.beta)
+    volume = args.lattice_size**2
+    fig = hmc_summary(
+        args.beta,
+        args.max_lag,
+        volume,
+        therm_plaq,
+        plaq,
+        topo,
+        hamiltonians,
+        therm_acceptance_rate,
+        acceptance_rate,
+    )
+    if fig is not None:
+        fig.savefig(
+            plot_dir / f"comparison_hmc_L{args.lattice_size}_beta{beta_tag}_nsteps{args.n_steps}_{args.rand_seed}.pdf",
+            transparent=True,
+        )
+
+    np.savetxt(
+        dump_dir / f"topo_hmc_L{args.lattice_size}_beta{beta_tag}_nsteps{args.n_steps}_{args.rand_seed}.csv",
+        np.array(topo),
+        fmt="%.6e",
+    )
+    np.savetxt(
+        dump_dir / f"accept_rate_hmc_L{args.lattice_size}_beta{beta_tag}_nsteps{args.n_steps}_{args.rand_seed}.csv",
+        [acceptance_rate],
+        fmt="%.6e",
+    )
+    print(f">>> Total HMC time: {therm_time + run_time:.2f} seconds")
+
+
+if __name__ == "__main__":
+    main()

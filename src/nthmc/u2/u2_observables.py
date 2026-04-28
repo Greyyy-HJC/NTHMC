@@ -124,10 +124,35 @@ def plaquette_from_field(links: torch.Tensor) -> torch.Tensor:
     )
 
 
+def plaquette_from_field_batch(links: torch.Tensor) -> torch.Tensor:
+    """Calculate plaquettes for split U(2) fields with shape [batch, 2, L, L, 5]."""
+    links = u2_normalize(links)
+    link0, link1 = links[:, 0], links[:, 1]
+    return u2_mul(
+        u2_mul(
+            u2_mul(link0, u2_conj(link1)),
+            u2_conj(torch.roll(link0, shifts=-1, dims=2)),
+        ),
+        torch.roll(link1, shifts=-1, dims=1),
+    )
+
+
 def plaquette_mean_from_field(links: torch.Tensor) -> torch.Tensor:
     """Calculate the mean normalized plaquette, 0.5 * ReTr(U_p)."""
     plaquettes = plaquette_from_field(links)
     return torch.mean(torch.cos(plaquettes[..., 0]) * plaquettes[..., 1])
+
+
+def plaquette_mean_from_field_batch(links: torch.Tensor) -> torch.Tensor:
+    """Calculate per-configuration normalized plaquette means for a batch."""
+    plaquettes = plaquette_from_field_batch(links)
+    return torch.mean(torch.cos(plaquettes[..., 0]) * plaquettes[..., 1], dim=(1, 2))
+
+
+def action_from_field_batch(links: torch.Tensor, beta: float) -> torch.Tensor:
+    """Calculate the Wilson action for each split U(2) field in a batch."""
+    volume = links.shape[2] * links.shape[3]
+    return beta * volume * (1 - plaquette_mean_from_field_batch(links))
 
 
 def topology_from_field(links: torch.Tensor) -> torch.Tensor:
@@ -170,6 +195,47 @@ def u2_to_matrix(links: torch.Tensor) -> torch.Tensor:
         dim=-2,
     )
     return phase_factor[..., None, None] * matrix
+
+
+def matrix_to_u2(matrix: torch.Tensor) -> torch.Tensor:
+    """Convert complex U(2) matrices to split phase plus SU(2) quaternions."""
+    if matrix.shape[-2:] != (2, 2):
+        raise ValueError("U(2) matrix tensors must end with shape [2, 2]")
+
+    determinant = torch.linalg.det(matrix)
+    phase = 0.5 * torch.angle(determinant)
+    complex_dtype = matrix.dtype
+    phase_factor = torch.exp(1j * phase.to(complex_dtype))
+    su2_matrix = matrix / phase_factor[..., None, None]
+
+    m00 = su2_matrix[..., 0, 0]
+    m01 = su2_matrix[..., 0, 1]
+    m10 = su2_matrix[..., 1, 0]
+    m11 = su2_matrix[..., 1, 1]
+    q0 = 0.5 * (m00.real + m11.real)
+    q1 = 0.5 * (m01.imag + m10.imag)
+    q2 = 0.5 * (m01.real - m10.real)
+    q3 = 0.5 * (m00.imag - m11.imag)
+    quaternion = quaternion_normalize(torch.stack([q0, q1, q2, q3], dim=-1))
+    return u2_normalize(torch.cat([phase[..., None].to(quaternion.dtype), quaternion], dim=-1))
+
+
+def get_link_mask(index: int, batch_size: int, lattice_size: int, device: torch.device | str) -> torch.Tensor:
+    """Mask the link subset updated by one U(2) coupling layer."""
+    mask = torch.zeros((batch_size, 2, lattice_size, lattice_size, 1), dtype=torch.bool, device=device)
+    direction = 0 if index < 4 else 1
+    parity = index % 4
+    row_slice = slice(0, None, 2) if parity < 2 else slice(1, None, 2)
+    col_slice = slice(0, None, 2) if parity in (0, 2) else slice(1, None, 2)
+    mask[:, direction, row_slice, col_slice, :] = True
+    return mask
+
+
+def identity_like(links: torch.Tensor) -> torch.Tensor:
+    """Return identity split U(2) links with the same leading link shape."""
+    result = torch.zeros_like(links)
+    result[..., 1] = 1.0
+    return result
 
 
 def autocorrelation(values: np.ndarray, max_lag: int) -> np.ndarray:
