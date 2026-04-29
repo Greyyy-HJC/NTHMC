@@ -14,6 +14,11 @@ This is an append-only development history for NTHMC.
 - Updated the U(1) scaling driver to reuse existing 2048-config training ensembles and completed 16-epoch models, and to use hand-probed no-tune evaluation step sizes for local presentation runs.
 - Added lattice-specific FT-HMC scaling step-size defaults after short no-tune acceptance probes.
 - Completed the U(1) scaling presentation run with 2048-sample HMC/FT-HMC evaluations and handled frozen-HMC infinite ratio points in the analysis notebook.
+- Added a U(2) base scaling driver with resumable gauge, training, accept-rate-checked evaluation stages, and a U(2) scaling presentation notebook.
+- Tuned U(2) base scaling gauge generation and no-tune evaluation step-size defaults with short CUDA acceptance probes.
+- Fixed U(2) base-training loss normalization to average per configuration, use sample-weighted epoch means, and use more conservative optimizer defaults after CUDA loss probes.
+- Fixed U(1) base and optimized training loss normalization to average per configuration and use sample-weighted epoch means.
+- Retrained the U(1) L8 and L16 base scaling checkpoints with the corrected loss normalization.
 
 ## 2026-04-27
 

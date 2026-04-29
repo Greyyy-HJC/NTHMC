@@ -303,12 +303,14 @@ class FieldTransformation:
         theta_new = self.inverse(theta_ori)
         force_new = self.compute_force(theta_new, self.train_beta, transformed=True)
         volume = self.lattice_size * self.lattice_size
-        return (
-            torch.norm(force_new, p=2) / (volume**0.5)
-            + torch.norm(force_new, p=4) / (volume**0.25)
-            + torch.norm(force_new, p=6) / (volume ** (1 / 6))
-            + torch.norm(force_new, p=8) / (volume ** (1 / 8))
+        force_flat = force_new.reshape(force_new.shape[0], -1)
+        loss_per_config = (
+            torch.linalg.vector_norm(force_flat, ord=2, dim=1) / (volume**0.5)
+            + torch.linalg.vector_norm(force_flat, ord=4, dim=1) / (volume**0.25)
+            + torch.linalg.vector_norm(force_flat, ord=6, dim=1) / (volume ** (1 / 6))
+            + torch.linalg.vector_norm(force_flat, ord=8, dim=1) / (volume ** (1 / 8))
         )
+        return loss_per_config.mean()
 
     def train_step(self, theta_ori: torch.Tensor) -> float:
         theta_ori = theta_ori.to(self.device)
@@ -344,16 +346,25 @@ class FieldTransformation:
 
         for epoch in tqdm(range(n_epochs), desc="Training epochs"):
             self._set_models_mode(True)
-            epoch_losses = [self.train_step(batch) for batch in tqdm(train_loader, desc=f"Epoch {epoch + 1}/{n_epochs}")]
-            train_loss = float(np.mean(epoch_losses))
+            epoch_losses = [
+                (self.train_step(batch), len(batch))
+                for batch in tqdm(train_loader, desc=f"Epoch {epoch + 1}/{n_epochs}")
+            ]
+            train_loss = self._weighted_epoch_loss(epoch_losses)
             train_losses.append(train_loss)
 
             self._set_models_mode(False)
-            test_epoch_losses = [self.evaluate_step(batch) for batch in tqdm(test_loader, desc="Evaluating")]
-            test_loss = float(np.mean(test_epoch_losses))
+            test_epoch_losses = [
+                (self.evaluate_step(batch), len(batch))
+                for batch in tqdm(test_loader, desc="Evaluating")
+            ]
+            test_loss = self._weighted_epoch_loss(test_epoch_losses)
             test_losses.append(test_loss)
 
-            self.print(f"Epoch {epoch + 1}/{n_epochs} - Train Loss: {train_loss:.6f} - Test Loss: {test_loss:.6f}")
+            self.print(
+                f"Epoch {epoch + 1}/{n_epochs} - "
+                f"Train Loss: {train_loss:.6f} - Test Loss: {test_loss:.6f}"
+            )
             if test_loss < best_loss:
                 self.save_best_model(epoch, test_loss)
                 best_loss = test_loss
@@ -368,6 +379,13 @@ class FieldTransformation:
     def _set_models_mode(self, is_train: bool) -> None:
         for model in self.models:
             model.train() if is_train else model.eval()
+
+    @staticmethod
+    def _weighted_epoch_loss(losses_and_counts: list[tuple[float, int]]) -> float:
+        total_count = sum(count for _, count in losses_and_counts)
+        if total_count == 0:
+            return float("nan")
+        return float(sum(loss * count for loss, count in losses_and_counts) / total_count)
 
     def checkpoint_path(self, train_beta: float) -> Path:
         return self.model_dir / f"best_model_train_beta{format_beta(train_beta)}_{self.save_tag}.pt"

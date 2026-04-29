@@ -55,6 +55,7 @@ Implemented U(2) entry points:
 - `2du2/model_training/train.py`: train the base U(2) neural field transformation from generated gauges with Lightning Fabric DDP.
 - `2du2/evaluation/base/compare_fthmc.py`: evaluate a trained U(2) base transformation with FT-HMC.
 - `2du2/evaluation/hmc/compare_hmc.py`: evaluate standard U(2) HMC without a field transformation.
+- `2du2/scripts/run_scaling.sh`: pre-run the U(2) base scaling workflow before presentation analysis; it mirrors the U(1) scaling grid and supports resumable gauge, training, and evaluation stages.
 
 The U(2) implementation internally stores links as a U(1) phase plus an SU(2) unit quaternion and exports generated configs as complex `2x2` matrices. Training converts those matrix configs back to the split representation on load. The base U(2) field transformation is a volume-preserving coupling map that updates full U(2) links with four Lie-algebra coefficients per active link.
 
