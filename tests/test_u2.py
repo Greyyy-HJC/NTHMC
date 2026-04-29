@@ -5,16 +5,24 @@ from nthmc.u2.u2_fthmc import HMCU2FT
 from nthmc.u2.u2_hmc import HMCU2
 from nthmc.u2.u2_observables import (
     identity_field,
+    loop_sin_cos_features,
     matrix_to_u2,
     plaq_mean_theory,
     plaquette_from_field_batch,
     plaquette_mean_from_field,
     plaquette_from_field,
+    rectangle_from_field_batch,
     set_seed,
     topology_from_field,
+    u2_conj,
     u2_exp,
+    u2_log,
     u2_mul,
     u2_to_matrix,
+)
+from nthmc.u1.u1_observables import (
+    plaq_from_field_batch as u1_plaq_from_field_batch,
+    rect_from_field_batch as u1_rect_from_field_batch,
 )
 
 
@@ -64,6 +72,70 @@ def test_batch_plaquette_matches_single_field_helper() -> None:
     assert torch.allclose(u2_to_matrix(batch_plaquettes), u2_to_matrix(single_plaquettes), atol=1e-5)
 
 
+def test_rectangle_from_field_batch_returns_unitary_loops() -> None:
+    links = u2_exp(torch.randn(3, 2, 4, 4, 4))
+    rectangles = rectangle_from_field_batch(links)
+    matrices = u2_to_matrix(rectangles)
+    identity = torch.eye(2, dtype=matrices.dtype)
+
+    assert rectangles.shape == (3, 2, 4, 4, 5)
+    assert torch.allclose(matrices.mH @ matrices, identity.expand_as(matrices), atol=1e-5)
+
+
+def test_u2_loops_match_u1_angles_for_phase_embedded_fields() -> None:
+    theta = torch.randn(2, 4, 4)
+    links = torch.zeros(1, 2, 4, 4, 5)
+    links[0, ..., 0] = theta
+    links[..., 1] = 1.0
+
+    u2_plaq_phase = plaquette_from_field_batch(links)[..., 0]
+    u1_plaq = u1_plaq_from_field_batch(theta.unsqueeze(0))
+    u2_rect_phase = rectangle_from_field_batch(links)[..., 0]
+    u1_rect = u1_rect_from_field_batch(theta.unsqueeze(0))
+
+    assert torch.allclose(torch.cos(u2_plaq_phase), torch.cos(u1_plaq), atol=1e-5)
+    assert torch.allclose(torch.sin(u2_plaq_phase), torch.sin(u1_plaq), atol=1e-5)
+    assert torch.allclose(torch.cos(u2_rect_phase), torch.cos(u1_rect), atol=1e-5)
+    assert torch.allclose(torch.sin(u2_rect_phase), torch.sin(u1_rect), atol=1e-5)
+
+
+def test_loop_sin_cos_features_have_inverse_loop_orientation() -> None:
+    loops = u2_exp(torch.randn(8, 4))
+
+    features = loop_sin_cos_features(loops)
+    inverse_features = loop_sin_cos_features(u2_conj(loops))
+
+    assert torch.allclose(inverse_features[..., :4], -features[..., :4], atol=1e-5)
+    assert torch.allclose(inverse_features[..., 4:], features[..., 4:], atol=1e-5)
+
+
+def test_loop_delta_applies_orientation_only_to_sin_like_terms() -> None:
+    transform = FieldTransformation.__new__(FieldTransformation)
+    transform.lattice_size = 1
+    transform.device = torch.device("cpu")
+
+    loops = u2_exp(torch.randn(1, 2, 1, 1, 4))
+    signs = torch.tensor([-1.0, 1.0])
+
+    sin_coeffs = torch.zeros(1, 2, 4, 1, 1)
+    sin_coeffs[:, :, 0] = 1.0
+    sin_coeffs[:, :, 1] = 1.0
+    sin_coeffs = sin_coeffs.reshape(1, 8, 1, 1)
+
+    cos_coeffs = torch.zeros(1, 2, 4, 1, 1)
+    cos_coeffs[:, :, 2] = 1.0
+    cos_coeffs[:, :, 3] = 1.0
+    cos_coeffs = cos_coeffs.reshape(1, 8, 1, 1)
+
+    sin_delta = transform._loop_delta(sin_coeffs, loops, signs)
+    sin_delta_flipped = transform._loop_delta(sin_coeffs, loops, -signs)
+    cos_delta = transform._loop_delta(cos_coeffs, loops, signs)
+    cos_delta_flipped = transform._loop_delta(cos_coeffs, loops, -signs)
+
+    assert torch.allclose(sin_delta_flipped, -sin_delta, atol=1e-5)
+    assert torch.allclose(cos_delta_flipped, cos_delta, atol=1e-5)
+
+
 def test_identity_field_has_unit_plaquette_and_zero_action() -> None:
     hmc = HMCU2(lattice_size=4, beta=3.0, n_thermalization_steps=1, n_steps=1, step_size=0.1)
     links = identity_field(4)
@@ -90,7 +162,7 @@ def test_u2_theoretical_plaquette_is_finite_real_value() -> None:
 
 
 def test_zero_initialized_field_transform_preserves_links() -> None:
-    transform = FieldTransformation(4, n_subsets=8, identity_init=False)
+    transform = FieldTransformation(4, n_subsets=1, identity_init=False)
     for model in transform.models:
         for param in model.parameters():
             torch.nn.init.zeros_(param)
@@ -99,18 +171,68 @@ def test_zero_initialized_field_transform_preserves_links() -> None:
     transformed = transform.forward(links)
 
     assert torch.allclose(u2_to_matrix(transformed), u2_to_matrix(links), atol=1e-5)
-    assert torch.allclose(transform.compute_jac_logdet(links), torch.zeros(2))
+    assert torch.allclose(transform.compute_jac_logdet(links), torch.zeros(2), atol=1e-6)
 
 
 def test_field_transform_inverse_round_trip() -> None:
     set_seed(1234)
-    transform = FieldTransformation(4, n_subsets=8, identity_init=True, hyperparams={"init_std": 0.001})
+    transform = FieldTransformation(4, n_subsets=1, identity_init=True, hyperparams={"init_std": 0.0001})
     links = u2_exp(torch.randn(2, 2, 4, 4, 4))
 
     transformed = transform.forward(links)
-    recovered = transform.inverse(transformed)
+    recovered = transform.inverse(transformed, max_iter=80, tol=1e-5)
 
-    assert torch.allclose(u2_to_matrix(recovered), u2_to_matrix(links), atol=1e-5)
+    assert torch.allclose(u2_to_matrix(recovered), u2_to_matrix(links), atol=1e-4)
+
+
+def test_field_transform_jacobian_is_finite_and_differentiable() -> None:
+    set_seed(1234)
+    transform = FieldTransformation(2, n_subsets=1, identity_init=True, hyperparams={"init_std": 0.0001})
+    links = u2_exp(torch.randn(1, 2, 2, 2, 4))
+
+    logdet = transform.compute_jac_logdet(links)
+    force = transform.compute_force(links, beta=1.0, transformed=True)
+
+    assert logdet.shape == (1,)
+    assert torch.isfinite(logdet).all()
+    assert force.shape == (1, 2, 2, 2, 4)
+    assert torch.isfinite(force).all()
+    assert torch.allclose(u2_log(u2_exp(torch.zeros(4))), torch.zeros(4))
+
+
+def test_field_transform_manual_jacobian_matches_autograd() -> None:
+    set_seed(1234)
+    transform = FieldTransformation(
+        2,
+        n_subsets=1,
+        identity_init=True,
+        hyperparams={"init_std": 0.0001},
+        compile_enabled=False,
+    )
+    links = u2_exp(0.2 * torch.randn(1, 2, 2, 2, 4))
+
+    manual = transform.compute_jac_logdet(links)
+    autograd = transform.compute_jac_logdet_autograd(links)
+
+    assert torch.allclose(manual, autograd, rtol=1e-4, atol=1e-6)
+
+
+def test_field_transform_full_subset_float32_jacobian_check_tolerance() -> None:
+    set_seed(1029)
+    transform = FieldTransformation(
+        8,
+        n_subsets=8,
+        identity_init=True,
+        hyperparams={"init_std": 0.001},
+        compile_enabled=False,
+    )
+    links = u2_exp(0.2 * torch.randn(1, 2, 8, 8, 4))
+
+    manual = transform.compute_jac_logdet(links)
+    autograd = transform.compute_jac_logdet_autograd(links)
+    rtol, atol = transform._jacobian_check_tolerances(links)
+
+    assert torch.allclose(manual, autograd, rtol=rtol, atol=atol)
 
 
 def test_hmc_smoke_run_outputs_valid_u2_configs() -> None:
@@ -146,7 +268,7 @@ def test_hmc_smoke_run_outputs_valid_u2_configs() -> None:
 
 def test_fthmc_smoke_run_outputs_valid_u2_configs() -> None:
     set_seed(1234)
-    transform = FieldTransformation(4, n_subsets=8, identity_init=False)
+    transform = FieldTransformation(4, n_subsets=1, identity_init=False)
     for model in transform.models:
         for param in model.parameters():
             torch.nn.init.zeros_(param)

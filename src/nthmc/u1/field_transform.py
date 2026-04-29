@@ -337,6 +337,18 @@ class FieldTransformation:
 
         return log_det
 
+    def compute_jac_logdet_autograd(self, theta: torch.Tensor) -> torch.Tensor:
+        """Compute the full Jacobian log determinant for the first batch item."""
+        theta_single = theta[0].unsqueeze(0)
+        jacobian = torch.autograd.functional.jacobian(
+            self.forward_compiled,
+            theta_single,
+            create_graph=True,
+        )
+        jacobian_2d = jacobian.reshape(theta_single.shape[0], theta_single.numel(), theta_single.numel())
+        _, logabsdet = torch.linalg.slogdet(jacobian_2d)
+        return logabsdet
+
     def compute_action(self, theta: torch.Tensor, beta: float) -> torch.Tensor:
         plaq = plaq_from_field_batch(theta)
         return -beta * torch.sum(torch.cos(plaq), dim=(1, 2))
@@ -347,7 +359,28 @@ class FieldTransformation:
 
         if transformed:
             theta_ori = self.forward_compiled(theta)
-            total_action = self.compute_action_compiled(theta_ori, beta) - self.compute_jac_logdet_compiled(theta)
+            action = self.compute_action_compiled(theta_ori, beta)
+            jac_logdet = self.compute_jac_logdet_compiled(theta)
+            if self.if_check_jac:
+                jac_logdet_autograd = self.compute_jac_logdet_autograd(theta)
+                abs_diff = torch.abs(jac_logdet_autograd[0] - jac_logdet[0])
+                denominator = torch.clamp(torch.abs(jac_logdet[0]), min=1e-12)
+                relative_diff = abs_diff / denominator
+                is_close = torch.isclose(jac_logdet_autograd[0], jac_logdet[0], rtol=1e-4, atol=1e-6)
+                if not is_close.item():
+                    self.print(
+                        "\nWarning: Jacobian log determinant difference "
+                        f"abs={abs_diff.item():.2e}, rel={relative_diff.item():.2e}"
+                    )
+                    self.print(">>> Jacobian is not correct!")
+                else:
+                    self.print(
+                        "\nJacobian log det "
+                        f"(manual): {jac_logdet[0].item():.2e}, "
+                        f"(autograd): {jac_logdet_autograd[0].item():.2e}"
+                    )
+                    self.print(">>> Jacobian is all good!")
+            total_action = action - jac_logdet
         else:
             total_action = self.compute_action_compiled(theta, beta)
 

@@ -39,6 +39,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rand_seed", type=int, default=1331)
     parser.add_argument("--if_identity_init", action="store_true")
     parser.add_argument("--if_check_jac", action="store_true")
+    parser.add_argument("--if_compile", action="store_true")
     parser.add_argument("--lr", type=float, default=None)
     parser.add_argument("--weight_decay", type=float, default=None)
     parser.add_argument("--init_std", type=float, default=None)
@@ -104,6 +105,7 @@ def main() -> None:
         dump_dir=dump_dir,
         hyperparams=hyperparams,
         fabric=fabric,
+        compile_enabled=args.if_compile,
     )
 
     if args.continue_beta is not None:

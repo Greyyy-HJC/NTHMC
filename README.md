@@ -134,6 +134,10 @@ Z_U2 = I_0(x)^2 - I_1(x)^2
 <p> = I_1(x) * (I_0(x) - I_2(x)) / (2 * Z_U2).
 ```
 
+The base U(2) field transformation uses plaquette and rectangle loop terms projected into trace/traceless sin-like and cos-like U(2) algebra components. It is not volume preserving: the FT-HMC action includes an exact Jacobian computed as `4x4` active-link tangent blocks. Older U(2) base checkpoints from the previous volume-preserving transform are not compatible and need to be retrained.
+
+U(2) training runs in eager mode by default. Add `--if_check_jac` for small diagnostic runs that compare the manual active-link Jacobian with an autograd Jacobian, and add `--if_compile` only when the local PyTorch backend benefits from `torch.compile`.
+
 ```bash
 cd /eagle/fthmc/run/NTHMC/2du2/gauge_generation
 python generate.py --lattice_size 8 --beta 3.0 --n_configs 32 --n_thermalization 20 --n_steps 4 --no_tune_step_size

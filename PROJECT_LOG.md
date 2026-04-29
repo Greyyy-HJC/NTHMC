@@ -5,7 +5,10 @@ This is an append-only development history for NTHMC.
 ## 2026-04-29
 
 - Replaced the U(1) base field-transformation module with the optimized sin/cos implementation including rectangle-loop terms.
+- Upgraded the U(2) base field transformation to non-volume-preserving plaquette/rectangle loop terms with exact active-link local Jacobians.
 - Removed the duplicate U(1) optimized training entry points now covered by the unified training script.
+- Retrained the U(1) beta=3.0 L8 and L16 scaling checkpoints with the unified field-transformation module.
+- Documented the U(2) Jacobian-check and optional compile controls for the upgraded base transformation.
 
 ## 2026-04-28
 

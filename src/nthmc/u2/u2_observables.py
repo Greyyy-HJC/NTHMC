@@ -98,6 +98,19 @@ def u2_exp(algebra: torch.Tensor) -> torch.Tensor:
     return torch.cat([phase, quaternion], dim=-1)
 
 
+def u2_log(links: torch.Tensor) -> torch.Tensor:
+    """Map split U(2) links to real U(2) algebra coefficients."""
+    links = u2_normalize(links)
+    phase = links[..., :1]
+    quaternion = links[..., 1:]
+    q0 = quaternion[..., :1]
+    qv = quaternion[..., 1:]
+    qv_norm = torch.linalg.norm(qv, dim=-1, keepdim=True)
+    angle = torch.atan2(qv_norm, q0)
+    scale = torch.where(qv_norm > 1e-12, angle / qv_norm.clamp_min(1e-12), torch.ones_like(qv_norm))
+    return torch.cat([phase, scale * qv], dim=-1)
+
+
 def identity_field(
     lattice_size: int,
     *,
@@ -135,6 +148,51 @@ def plaquette_from_field_batch(links: torch.Tensor) -> torch.Tensor:
         ),
         torch.roll(link1, shifts=-1, dims=1),
     )
+
+
+def rectangle_from_field_batch(links: torch.Tensor) -> torch.Tensor:
+    """Calculate 1x2 and 2x1 rectangle loops for split U(2) fields."""
+    links = u2_normalize(links)
+    link0, link1 = links[:, 0], links[:, 1]
+
+    rect0 = u2_mul(
+        u2_mul(
+            u2_mul(
+                u2_mul(
+                    u2_mul(link0, torch.roll(link0, shifts=-1, dims=1)),
+                    torch.roll(link1, shifts=-2, dims=1),
+                ),
+                u2_conj(torch.roll(link0, shifts=(-1, -1), dims=(1, 2))),
+            ),
+            u2_conj(torch.roll(link0, shifts=-1, dims=2)),
+        ),
+        u2_conj(link1),
+    )
+    rect1 = u2_mul(
+        u2_mul(
+            u2_mul(
+                u2_mul(
+                    u2_mul(link0, torch.roll(link1, shifts=-1, dims=1)),
+                    torch.roll(link1, shifts=(-1, -1), dims=(1, 2)),
+                ),
+                u2_conj(torch.roll(link0, shifts=-2, dims=2)),
+            ),
+            u2_conj(torch.roll(link1, shifts=-1, dims=2)),
+        ),
+        u2_conj(link1),
+    )
+    return torch.stack([rect0, rect1], dim=1)
+
+
+def loop_sin_cos_features(loops: torch.Tensor) -> torch.Tensor:
+    """Return sin-like and cos-like trace/traceless algebra coefficients for U(2) loops."""
+    loops = u2_normalize(loops)
+    phase = loops[..., :1]
+    q0 = loops[..., 1:2]
+    qv = loops[..., 2:]
+    sin_like = torch.cat([q0 * torch.sin(phase), qv * torch.cos(phase)], dim=-1)
+    cos_like = torch.cat([q0 * torch.cos(phase), -qv * torch.sin(phase)], dim=-1)
+    return torch.cat([sin_like, cos_like], dim=-1)
 
 
 def plaquette_mean_from_field(links: torch.Tensor) -> torch.Tensor:
@@ -228,6 +286,52 @@ def get_link_mask(index: int, batch_size: int, lattice_size: int, device: torch.
     row_slice = slice(0, None, 2) if parity < 2 else slice(1, None, 2)
     col_slice = slice(0, None, 2) if parity in (0, 2) else slice(1, None, 2)
     mask[:, direction, row_slice, col_slice, :] = True
+    return mask
+
+
+def get_plaq_mask(index: int, batch_size: int, lattice_size: int, device: torch.device | str) -> torch.Tensor:
+    """Mask plaquettes that depend on the active link subset."""
+    mask = torch.zeros((batch_size, lattice_size, lattice_size, 1), dtype=torch.bool, device=device)
+    if index in (0, 1):
+        mask[:, 1::2, :, :] = True
+    elif index in (2, 3):
+        mask[:, 0::2, :, :] = True
+    elif index in (4, 6):
+        mask[:, :, 1::2, :] = True
+    elif index in (5, 7):
+        mask[:, :, 0::2, :] = True
+    return mask
+
+
+def get_rect_mask(index: int, batch_size: int, lattice_size: int, device: torch.device | str) -> torch.Tensor:
+    """Mask rectangles that depend on the active link subset."""
+    mask = torch.zeros((batch_size, 2, lattice_size, lattice_size, 1), dtype=torch.bool, device=device)
+
+    if index == 0:
+        mask[:, 1, 1::2, :, :] = True
+        mask[:, 1, 0::2, 1::2, :] = True
+    elif index == 1:
+        mask[:, 1, 1::2, :, :] = True
+        mask[:, 1, 0::2, 0::2, :] = True
+    elif index == 2:
+        mask[:, 1, 0::2, :, :] = True
+        mask[:, 1, 1::2, 1::2, :] = True
+    elif index == 3:
+        mask[:, 1, 0::2, :, :] = True
+        mask[:, 1, 1::2, 0::2, :] = True
+    elif index == 4:
+        mask[:, 0, :, 1::2, :] = True
+        mask[:, 0, 1::2, 0::2, :] = True
+    elif index == 5:
+        mask[:, 0, :, 0::2, :] = True
+        mask[:, 0, 1::2, 1::2, :] = True
+    elif index == 6:
+        mask[:, 0, :, 1::2, :] = True
+        mask[:, 0, 0::2, 0::2, :] = True
+    elif index == 7:
+        mask[:, 0, :, 0::2, :] = True
+        mask[:, 0, 0::2, 1::2, :] = True
+
     return mask
 
 
