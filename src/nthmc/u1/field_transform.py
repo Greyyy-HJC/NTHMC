@@ -1,4 +1,4 @@
-"""Base neural field transformation for 2D U(1)."""
+"""Optimized neural field transformation for 2D U(1)."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm
 
+from nthmc.u1.models import choose_model
 from nthmc.u1.u1_observables import (
     format_beta,
     get_field_mask,
@@ -22,11 +23,10 @@ from nthmc.u1.u1_observables import (
     plaq_from_field_batch,
     rect_from_field_batch,
 )
-from nthmc.u1.models import choose_model
 
 
 class FieldTransformation:
-    """Neural-network field transformation used by the base FT-HMC workflow."""
+    """Optimized field transformation with optional torch.compile."""
 
     def __init__(
         self,
@@ -37,13 +37,15 @@ class FieldTransformation:
         if_check_jac: bool = False,
         num_workers: int = 0,
         identity_init: bool = True,
-        model_tag: str = "base",
+        model_tag: str = "addcos",
         save_tag: str | None = None,
         model_dir: str | Path = "artifacts/models",
         plot_dir: str | Path = "plots",
         dump_dir: str | Path = "dumps",
         hyperparams: dict[str, float] | None = None,
         fabric=None,
+        backend: str = "eager",
+        compile_enabled: bool = True,
     ) -> None:
         self.lattice_size = lattice_size
         self.device = torch.device(device)
@@ -51,7 +53,7 @@ class FieldTransformation:
         self.if_check_jac = if_check_jac
         self.num_workers = num_workers
         self.model_tag = model_tag
-        self.save_tag = save_tag or "base"
+        self.save_tag = save_tag or "opt"
         self.model_dir = Path(model_dir)
         self.plot_dir = Path(plot_dir)
         self.dump_dir = Path(dump_dir)
@@ -59,9 +61,9 @@ class FieldTransformation:
         self.fabric = fabric
         self.print = fabric.print if fabric is not None else print
         self.backward = fabric.backward if fabric is not None else torch.autograd.backward
+        self.backend = backend
+        self.compile_enabled = compile_enabled
 
-        # These defaults match the baseline FT-HMC training setup; callers can override
-        # individual values without changing the checkpoint or plotting paths.
         self.hyperparams = {
             "init_std": 0.001,
             "lr": 0.001,
@@ -72,14 +74,12 @@ class FieldTransformation:
         if hyperparams:
             self.hyperparams.update(hyperparams)
 
-        # The transformation is composed of one small CNN per checkerboard-like link subset.
-        # Each model predicts the local plaquette and rectangle coefficients for its subset.
+        # Models return eight plaquette coefficients and sixteen rectangle
+        # coefficients: sin channels followed by cos channels.
         model_cls = choose_model(model_tag)
         raw_models = nn.ModuleList([model_cls().to(self.device) for _ in range(n_subsets)])
 
         if identity_init:
-            # Small coefficients make the initial map close to theta -> theta, which keeps
-            # early inverse iterations and Jacobian estimates stable.
             for model in raw_models:
                 for param in model.parameters():
                     nn.init.normal_(param, mean=0.0, std=self.hyperparams["init_std"])
@@ -109,6 +109,35 @@ class FieldTransformation:
             for optimizer in self.optimizers
         ]
 
+        self._init_compiled_functions()
+
+    def _init_compiled_functions(self) -> None:
+        """Prepare compiled callables and fall back to regular methods if unavailable."""
+        self.ft_phase_compiled = self.ft_phase
+        self.forward_compiled = self.forward
+        self.inverse_compiled = self.inverse
+        self.compute_jac_logdet_compiled = self.compute_jac_logdet
+        self.compute_action_compiled = self.compute_action
+
+        if not self.compile_enabled:
+            self.print("torch.compile disabled; using standard functions")
+            return
+        if not hasattr(torch, "compile"):
+            self.print("torch.compile not available; using standard functions")
+            return
+
+        compile_options = {"backend": self.backend, "fullgraph": False, "dynamic": True}
+        try:
+            self.ft_phase_compiled = torch.compile(self.ft_phase, **compile_options)
+            self.forward_compiled = torch.compile(self._forward_using_compiled_phase, **compile_options)
+            self.inverse_compiled = torch.compile(self._inverse_using_compiled_phase, **compile_options)
+            self.compute_jac_logdet_compiled = torch.compile(self.compute_jac_logdet, **compile_options)
+            self.compute_action_compiled = torch.compile(self.compute_action, **compile_options)
+            self.print(f"Initialized torch.compile wrappers with backend={self.backend!r}")
+        except Exception as exc:
+            self.print(f"Warning: torch.compile initialization failed: {exc}")
+            self.print("Falling back to standard functions")
+
     def compute_k0_k1(
         self,
         theta: torch.Tensor,
@@ -116,43 +145,41 @@ class FieldTransformation:
         plaq: torch.Tensor,
         rect: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return plaquette and rectangle coefficients for one active link subset."""
         batch_size = theta.shape[0]
         plaq_mask = get_plaq_mask(index, batch_size, self.lattice_size, self.device)
         rect_mask = get_rect_mask(index, batch_size, self.lattice_size, self.device)
 
-        # Only the loops affected by the active link subset are visible to this coupling layer.
         plaq_masked = plaq * plaq_mask
         rect_masked = rect * rect_mask
         plaq_features = torch.stack([torch.sin(plaq_masked), torch.cos(plaq_masked)], dim=1)
         rect_features = torch.cat([torch.sin(rect_masked), torch.cos(rect_masked)], dim=1)
-        return self.models[index](plaq_features, rect_features)
 
-    def ft_phase(self, theta: torch.Tensor, index: int) -> torch.Tensor:
-        batch_size = theta.shape[0]
-        plaq = plaq_from_field_batch(theta)
-        rect = rect_from_field_batch(theta)
-        rect0 = rect[:, 0]
-        rect1 = rect[:, 1]
+        output = self.models[index](plaq_features, rect_features)
+        if not isinstance(output, tuple):
+            raise ValueError("field_transform expects models to return (plaq_coeffs, rect_coeffs)")
+        k0, k1 = output
+        if k0.shape[1] != 8 or k1.shape[1] != 16:
+            raise ValueError("field_transform expects 8 plaquette and 16 rectangle coefficient channels")
+        return k0, k1
 
-        # Four plaquette derivatives contribute to the two link directions.
-        sin_plaq_stack = torch.stack(
+    def _plaq_angle_stack(self, plaq: torch.Tensor) -> torch.Tensor:
+        """Stack the four plaquette angles touching each active link."""
+        return torch.stack(
             [
-                -torch.sin(plaq),
-                torch.sin(torch.roll(plaq, shifts=1, dims=2)),
-                torch.sin(plaq),
-                -torch.sin(torch.roll(plaq, shifts=1, dims=1)),
+                plaq,
+                torch.roll(plaq, shifts=1, dims=2),
+                plaq,
+                torch.roll(plaq, shifts=1, dims=1),
             ],
             dim=1,
         )
-        k0, k1 = self.compute_k0_k1(theta, index, plaq, rect)
-        plaq_temp = k0 * sin_plaq_stack
-        ft_phase_plaq = torch.stack(
-            [plaq_temp[:, 0] + plaq_temp[:, 1], plaq_temp[:, 2] + plaq_temp[:, 3]],
-            dim=1,
-        )
 
-        # Each link participates in eight oriented 1x2 / 2x1 rectangles.
-        rect_angles = torch.stack(
+    def _rect_angle_stack(self, rect: torch.Tensor) -> torch.Tensor:
+        """Stack the eight rectangle angles touching each active link."""
+        rect0 = rect[:, 0]
+        rect1 = rect[:, 1]
+        return torch.stack(
             [
                 torch.roll(rect0, shifts=1, dims=1),
                 torch.roll(rect0, shifts=(1, 1), dims=(1, 2)),
@@ -165,45 +192,129 @@ class FieldTransformation:
             ],
             dim=1,
         )
-        signs = torch.tensor([-1, 1, -1, 1, 1, -1, 1, -1], device=self.device, dtype=theta.dtype)
-        sin_rect_stack = torch.sin(rect_angles) * signs.view(1, 8, 1, 1)
-        rect_temp = k1 * sin_rect_stack
-        ft_phase_rect = torch.stack(
+
+    def _plaq_phase_shift(self, k0: torch.Tensor, plaq_angles: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
+        sin_plaq_signs = torch.tensor([-1, 1, 1, -1], device=self.device, dtype=theta.dtype)
+        cos_plaq_signs = -sin_plaq_signs
+        plaq_stack = torch.cat(
             [
-                rect_temp[:, 0] + rect_temp[:, 1] + rect_temp[:, 2] + rect_temp[:, 3],
-                rect_temp[:, 4] + rect_temp[:, 5] + rect_temp[:, 6] + rect_temp[:, 7],
+                torch.sin(plaq_angles) * sin_plaq_signs.view(1, 4, 1, 1),
+                torch.cos(plaq_angles) * cos_plaq_signs.view(1, 4, 1, 1),
+            ],
+            dim=1,
+        )
+        temp = k0 * plaq_stack
+        return torch.stack(
+            [
+                temp[:, 0] + temp[:, 1] + temp[:, 4] + temp[:, 5],
+                temp[:, 2] + temp[:, 3] + temp[:, 6] + temp[:, 7],
             ],
             dim=1,
         )
 
+    def _plaq_jac_shift(self, k0: torch.Tensor, plaq_angles: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
+        temp = k0 * torch.cat([-torch.cos(plaq_angles), -torch.sin(plaq_angles)], dim=1)
+        return torch.stack(
+            [
+                temp[:, 0] + temp[:, 1] + temp[:, 4] + temp[:, 5],
+                temp[:, 2] + temp[:, 3] + temp[:, 6] + temp[:, 7],
+            ],
+            dim=1,
+        )
+
+    def _rect_phase_shift(self, k1: torch.Tensor, rect_angles: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
+        signs = torch.tensor([-1, 1, -1, 1, 1, -1, 1, -1], device=self.device, dtype=theta.dtype)
+        rect_stack = torch.cat(
+            [
+                torch.sin(rect_angles) * signs.view(1, 8, 1, 1),
+                torch.cos(rect_angles) * (-signs).view(1, 8, 1, 1),
+            ],
+            dim=1,
+        )
+        temp = k1 * rect_stack
+        return torch.stack(
+            [
+                temp[:, 0:4].sum(dim=1) + temp[:, 8:12].sum(dim=1),
+                temp[:, 4:8].sum(dim=1) + temp[:, 12:16].sum(dim=1),
+            ],
+            dim=1,
+        )
+
+    def _rect_jac_shift(self, k1: torch.Tensor, rect_angles: torch.Tensor) -> torch.Tensor:
+        temp = k1 * torch.cat([-torch.cos(rect_angles), -torch.sin(rect_angles)], dim=1)
+        return torch.stack(
+            [
+                temp[:, 0:4].sum(dim=1) + temp[:, 8:12].sum(dim=1),
+                temp[:, 4:8].sum(dim=1) + temp[:, 12:16].sum(dim=1),
+            ],
+            dim=1,
+        )
+
+    def ft_phase(self, theta: torch.Tensor, index: int) -> torch.Tensor:
+        batch_size = theta.shape[0]
+        plaq = plaq_from_field_batch(theta)
+        rect = rect_from_field_batch(theta)
+
+        plaq_angles = self._plaq_angle_stack(plaq)
+        rect_angles = self._rect_angle_stack(rect)
+        k0, k1 = self.compute_k0_k1(theta, index, plaq, rect)
+        ft_phase_plaq = self._plaq_phase_shift(k0, plaq_angles, theta)
+        ft_phase_rect = self._rect_phase_shift(k1, rect_angles, theta)
+
         field_mask = get_field_mask(index, batch_size, self.lattice_size, self.device)
         return (ft_phase_plaq + ft_phase_rect) * field_mask
 
-    def forward(self, theta: torch.Tensor) -> torch.Tensor:
+    def _forward_using_compiled_phase(self, theta: torch.Tensor) -> torch.Tensor:
         theta_curr = theta.clone()
         for index in range(self.n_subsets):
-            theta_curr = theta_curr + self.ft_phase(theta_curr, index)
+            theta_curr = theta_curr + self.ft_phase_compiled(theta_curr, index)
+        return theta_curr
+
+    def forward(self, theta: torch.Tensor) -> torch.Tensor:
+        theta_curr = theta.clone()
+        phase_fn = getattr(self, "ft_phase_compiled", self.ft_phase)
+        for index in range(self.n_subsets):
+            theta_curr = theta_curr + phase_fn(theta_curr, index)
         return theta_curr
 
     def field_transformation(self, theta: torch.Tensor) -> torch.Tensor:
         return self.forward(theta.unsqueeze(0)).squeeze(0)
 
+    def field_transformation_compiled(self, theta: torch.Tensor) -> torch.Tensor:
+        return self.forward_compiled(theta.unsqueeze(0)).squeeze(0)
+
+    def _inverse_using_compiled_phase(
+        self,
+        theta: torch.Tensor,
+        *,
+        max_iter: int = 200,
+        tol: float = 1e-6,
+    ) -> torch.Tensor:
+        return self.inverse(theta, max_iter=max_iter, tol=tol)
+
     def inverse(self, theta: torch.Tensor, *, max_iter: int = 200, tol: float = 1e-6) -> torch.Tensor:
         theta_curr = theta.clone()
+        phase_fn = getattr(self, "ft_phase_compiled", self.ft_phase)
         for index in reversed(range(self.n_subsets)):
             theta_iter = theta_curr.clone()
             diff = torch.tensor(float("inf"), device=self.device)
             for _ in range(max_iter):
-                theta_next = theta_curr - self.ft_phase(theta_iter, index)
+                theta_next = theta_curr - phase_fn(theta_iter, index)
                 denominator = torch.clamp(torch.norm(theta_iter), min=1e-12)
                 diff = torch.norm(theta_next - theta_iter) / denominator
                 theta_iter = theta_next
                 if diff < tol:
                     break
             if diff >= tol:
-                print(f"Warning: inverse iteration for subset {index} did not converge, diff={diff:.2e}")
+                self.print(f"Warning: inverse iteration for subset {index} did not converge, diff={diff:.2e}")
             theta_curr = theta_iter
         return theta_curr
+
+    def inverse_field_transformation(self, theta: torch.Tensor) -> torch.Tensor:
+        return self.inverse(theta.unsqueeze(0)).squeeze(0)
+
+    def inverse_field_transformation_compiled(self, theta: torch.Tensor) -> torch.Tensor:
+        return self.inverse_compiled(theta.unsqueeze(0)).squeeze(0)
 
     def compute_jac_logdet(self, theta: torch.Tensor) -> torch.Tensor:
         batch_size = theta.shape[0]
@@ -214,52 +325,13 @@ class FieldTransformation:
             field_mask = get_field_mask(index, batch_size, self.lattice_size, self.device)
             plaq = plaq_from_field_batch(theta_curr)
             rect = rect_from_field_batch(theta_curr)
-            rect0 = rect[:, 0]
-            rect1 = rect[:, 1]
 
-            cos_plaq_stack = -torch.cos(
-                torch.stack(
-                    [
-                        plaq,
-                        torch.roll(plaq, shifts=1, dims=2),
-                        plaq,
-                        torch.roll(plaq, shifts=1, dims=1),
-                    ],
-                    dim=1,
-                )
-            )
+            plaq_angles = self._plaq_angle_stack(plaq)
+            rect_angles = self._rect_angle_stack(rect)
             k0, k1 = self.compute_k0_k1(theta_curr, index, plaq, rect)
-            plaq_temp = k0 * cos_plaq_stack
-            plaq_jac_shift = torch.stack(
-                [plaq_temp[:, 0] + plaq_temp[:, 1], plaq_temp[:, 2] + plaq_temp[:, 3]],
-                dim=1,
-            ) * field_mask
+            plaq_jac_shift = self._plaq_jac_shift(k0, plaq_angles, theta_curr) * field_mask
+            rect_jac_shift = self._rect_jac_shift(k1, rect_angles) * field_mask
 
-            rect_angles = torch.stack(
-                [
-                    torch.roll(rect0, shifts=1, dims=1),
-                    torch.roll(rect0, shifts=(1, 1), dims=(1, 2)),
-                    rect0,
-                    torch.roll(rect0, shifts=1, dims=2),
-                    torch.roll(rect1, shifts=1, dims=2),
-                    torch.roll(rect1, shifts=(1, 1), dims=(1, 2)),
-                    rect1,
-                    torch.roll(rect1, shifts=1, dims=1),
-                ],
-                dim=1,
-            )
-            cos_rect_stack = -torch.cos(rect_angles)
-            rect_temp = k1 * cos_rect_stack
-            rect_jac_shift = torch.stack(
-                [
-                    rect_temp[:, 0] + rect_temp[:, 1] + rect_temp[:, 2] + rect_temp[:, 3],
-                    rect_temp[:, 4] + rect_temp[:, 5] + rect_temp[:, 6] + rect_temp[:, 7],
-                ],
-                dim=1,
-            ) * field_mask
-
-            # For this triangular coupling layer, the local Jacobian is diagonal on the
-            # active links, so the log determinant is the sum of log local shifts.
             log_det = log_det + torch.log(1 + plaq_jac_shift + rect_jac_shift).sum(dim=(1, 2, 3))
             theta_curr = theta_curr + self.ft_phase(theta_curr, index)
 
@@ -274,10 +346,10 @@ class FieldTransformation:
             theta = theta.clone().requires_grad_(True)
 
         if transformed:
-            theta_ori = self.forward(theta)
-            total_action = self.compute_action(theta_ori, beta) - self.compute_jac_logdet(theta)
+            theta_ori = self.forward_compiled(theta)
+            total_action = self.compute_action_compiled(theta_ori, beta) - self.compute_jac_logdet_compiled(theta)
         else:
-            total_action = self.compute_action(theta, beta)
+            total_action = self.compute_action_compiled(theta, beta)
 
         return torch.autograd.grad(total_action.sum(), theta, create_graph=True)[0]
 

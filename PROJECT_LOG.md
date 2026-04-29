@@ -2,6 +2,11 @@
 
 This is an append-only development history for NTHMC.
 
+## 2026-04-29
+
+- Replaced the U(1) base field-transformation module with the optimized sin/cos implementation including rectangle-loop terms.
+- Removed the duplicate U(1) optimized training entry points now covered by the unified training script.
+
 ## 2026-04-28
 
 - Added the U(2) base field-transformation, model-training, and FT-HMC evaluation pipeline.

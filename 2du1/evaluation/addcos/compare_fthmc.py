@@ -13,7 +13,7 @@ import torch
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from nthmc.u1.field_transform_opt import FieldTransformation
+from nthmc.u1.field_transform import FieldTransformation
 from nthmc.u1.plotting import hmc_summary
 from nthmc.u1.u1_observables import format_beta, set_seed
 from nthmc.u1.u1_fthmc import HMCU1FT

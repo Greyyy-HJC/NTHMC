@@ -56,14 +56,16 @@ class LocalNet(nn.Module):
         x = torch.cat([plaq_features, rect_features], dim=1)
         x = self.activation(self.conv_input(x))
         x = torch.arctan(self.conv_output(x)) / math.pi / 3
-        plaq_coeffs = x[:, : self.config.plaq_output_channels]
-        rect_coeffs = x[:, self.config.plaq_output_channels :]
+        plaq_sin_coeffs = x[:, : self.config.plaq_output_channels]
+        rect_sin_coeffs = x[:, self.config.plaq_output_channels :]
+        plaq_coeffs = torch.cat([plaq_sin_coeffs, torch.zeros_like(plaq_sin_coeffs)], dim=1)
+        rect_coeffs = torch.cat([rect_sin_coeffs, torch.zeros_like(rect_sin_coeffs)], dim=1)
         return plaq_coeffs, rect_coeffs
 
 
-class LocalNetAddCosNoRect(nn.Module):
+class LocalNetAddCosWeight(nn.Module):
     """
-    Totally remove the rect channels
+    Add weighted threasholds to plaq and rect channels
     """
     def __init__(self):
         super().__init__()
@@ -71,7 +73,7 @@ class LocalNetAddCosNoRect(nn.Module):
             
         # Combined input channels for plaq and rect features
         combined_input_channels = config.plaq_input_channels + config.rect_input_channels
-        combined_output_channels = 2 * config.plaq_output_channels #! add cos terms
+        combined_output_channels = 2 * (config.plaq_output_channels + config.rect_output_channels) #! add cos terms
 
         # First conv layer to process combined features
         # Parameters = input_channels x output_channels x kernel_height x kernel_width + bias_terms
@@ -86,7 +88,7 @@ class LocalNetAddCosNoRect(nn.Module):
         self.activation = nn.GELU()  # 0 parameters
         
         # Second conv layer to generate final outputs
-        # Parameters: 12 * 12 * 3 * 3 + 12 = 1,308
+        # Parameters: 12 * 24 * 3 * 3 + 24 = 2,616
         self.conv_output = nn.Conv2d(
             config.hidden_channels,
             combined_output_channels,  # Combined output channels
@@ -108,13 +110,14 @@ class LocalNetAddCosNoRect(nn.Module):
         x = self.conv_input(x)
         x = self.activation(x)  # 0 parameters
         
-        # Second conv layer (1,308 parameters used)
+        # Second conv layer (2,616 parameters used)
         x = self.conv_output(x)
         
         # Output scaling
-        plaq_coeffs = torch.tanh(x[:, :, :, :]) / 4  # [batch_size, 8, L, L]
+        plaq_coeffs = torch.tanh(x[:, :2 * config.plaq_output_channels, :, :]) / 5  # [batch_size, 8, L, L] in range [-1/5, 1/5]
+        rect_coeffs = torch.tanh(x[:, 2 * config.plaq_output_channels:, :, :]) / 40  # [batch_size, 16, L, L] in range [-1/40, 1/40]
         
-        return plaq_coeffs 
+        return plaq_coeffs, rect_coeffs 
 
 
 def choose_model(model_tag: str) -> type[nn.Module]:
@@ -122,7 +125,6 @@ def choose_model(model_tag: str) -> type[nn.Module]:
     if model_tag == 'base':
         return LocalNet
     elif model_tag == 'addcos':
-        return LocalNetAddCosNoRect
+        return LocalNetAddCosWeight
     else:
         raise ValueError(f"Invalid model tag: {model_tag}")
-

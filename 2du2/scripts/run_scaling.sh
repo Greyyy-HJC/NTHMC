@@ -8,7 +8,7 @@ PYTHON_BIN=${PYTHON_BIN:-"${REPO_ROOT}/.venv/bin/python"}
 TORCHRUN_BIN=${TORCHRUN_BIN:-"${REPO_ROOT}/.venv/bin/torchrun"}
 
 LATTICE_SIZES_RAW=${LATTICE_SIZES:-"8 16"}
-BETAS_RAW=${BETAS:-"3.0 4.0 5.0 6.0"}
+BETAS_RAW=${BETAS:-"3.0 4.0 5.0 6.0 7.0 8.0"}
 SEEDS_RAW=${SEEDS:-"1029"}
 read -r -a LATTICE_SIZES <<< "${LATTICE_SIZES_RAW}"
 read -r -a BETAS <<< "${BETAS_RAW}"
@@ -49,9 +49,17 @@ EVAL_N_STEPS=${EVAL_N_STEPS:-10}
 HMC_STEP_SIZE=${HMC_STEP_SIZE:-0.1}
 HMC_STEP_SIZE_L8=${HMC_STEP_SIZE_L8:-0.25}
 HMC_STEP_SIZE_L16=${HMC_STEP_SIZE_L16:-0.23}
+HMC_STEP_SIZE_L8_BETA7_0=${HMC_STEP_SIZE_L8_BETA7_0:-0.20}
+HMC_STEP_SIZE_L8_BETA8_0=${HMC_STEP_SIZE_L8_BETA8_0:-0.16}
+HMC_STEP_SIZE_L16_BETA7_0=${HMC_STEP_SIZE_L16_BETA7_0:-0.18}
+HMC_STEP_SIZE_L16_BETA8_0=${HMC_STEP_SIZE_L16_BETA8_0:-0.14}
 FT_STEP_SIZE=${FT_STEP_SIZE:-0.1}
 FT_STEP_SIZE_L8=${FT_STEP_SIZE_L8:-0.24}
 FT_STEP_SIZE_L16=${FT_STEP_SIZE_L16:-0.225}
+FT_STEP_SIZE_L8_BETA7_0=${FT_STEP_SIZE_L8_BETA7_0:-0.235}
+FT_STEP_SIZE_L8_BETA8_0=${FT_STEP_SIZE_L8_BETA8_0:-0.19}
+FT_STEP_SIZE_L16_BETA7_0=${FT_STEP_SIZE_L16_BETA7_0:-0.195}
+FT_STEP_SIZE_L16_BETA8_0=${FT_STEP_SIZE_L16_BETA8_0:-0.17}
 EVAL_N_TUNE_STEPS=${EVAL_N_TUNE_STEPS:-1000}
 MAX_LAG=${MAX_LAG:-20}
 EVAL_NO_TUNE_STEP_SIZE=${EVAL_NO_TUNE_STEP_SIZE:-1}
@@ -115,24 +123,36 @@ fthmc_accept_rate_path() {
     echo "${REPO_ROOT}/2du2/evaluation/base/dumps/accept_rate_fthmc_L${lattice_size}_beta${beta}_nsteps${EVAL_N_STEPS}_${save_tag}.csv"
 }
 
-hmc_step_size_for_lattice() {
+hmc_step_size_for_lattice_beta() {
     local lattice_size=$1
+    local beta=$2
+    local beta_tag=${beta//./_}
+    local beta_specific_var="HMC_STEP_SIZE_L${lattice_size}_BETA${beta_tag}"
+    local beta_specific_value="${!beta_specific_var:-}"
     local lattice_specific_var="HMC_STEP_SIZE_L${lattice_size}"
     local lattice_specific_value="${!lattice_specific_var:-}"
 
-    if [[ -n "${lattice_specific_value}" ]]; then
+    if [[ -n "${beta_specific_value}" ]]; then
+        echo "${beta_specific_value}"
+    elif [[ -n "${lattice_specific_value}" ]]; then
         echo "${lattice_specific_value}"
     else
         echo "${HMC_STEP_SIZE}"
     fi
 }
 
-fthmc_step_size_for_lattice() {
+fthmc_step_size_for_lattice_beta() {
     local lattice_size=$1
+    local beta=$2
+    local beta_tag=${beta//./_}
+    local beta_specific_var="FT_STEP_SIZE_L${lattice_size}_BETA${beta_tag}"
+    local beta_specific_value="${!beta_specific_var:-}"
     local lattice_specific_var="FT_STEP_SIZE_L${lattice_size}"
     local lattice_specific_value="${!lattice_specific_var:-}"
 
-    if [[ -n "${lattice_specific_value}" ]]; then
+    if [[ -n "${beta_specific_value}" ]]; then
+        echo "${beta_specific_value}"
+    elif [[ -n "${lattice_specific_value}" ]]; then
         echo "${lattice_specific_value}"
     else
         echo "${FT_STEP_SIZE}"
@@ -271,7 +291,7 @@ run_hmc_evaluation() {
     local beta=$2
     local seed=$3
     local hmc_step_size
-    hmc_step_size=$(hmc_step_size_for_lattice "${lattice_size}")
+    hmc_step_size=$(hmc_step_size_for_lattice_beta "${lattice_size}" "${beta}")
 
     (
         cd "${REPO_ROOT}/2du2/evaluation/hmc"
@@ -296,7 +316,7 @@ run_fthmc_evaluation() {
     local seed=$3
     local save_tag="base_scaling_train_b${TRAIN_BETA}_L${lattice_size}_${seed}"
     local ft_step_size
-    ft_step_size=$(fthmc_step_size_for_lattice "${lattice_size}")
+    ft_step_size=$(fthmc_step_size_for_lattice_beta "${lattice_size}" "${beta}")
 
     (
         cd "${REPO_ROOT}/2du2/evaluation/base"
@@ -352,7 +372,7 @@ for lattice_size in "${LATTICE_SIZES[@]}"; do
                     && has_accept_rate_in_range "${hmc_accept_rate_path}" "${EVAL_ACCEPT_RATE_MIN}" "${EVAL_ACCEPT_RATE_MAX}"; then
                     echo ">>> Reusing standard U(2) HMC evaluation: ${hmc_path}"
                 else
-                    echo ">>> Evaluating standard U(2) HMC: L=${lattice_size}, beta=${beta}, step_size=$(hmc_step_size_for_lattice "${lattice_size}"), seed=${seed}"
+                    echo ">>> Evaluating standard U(2) HMC: L=${lattice_size}, beta=${beta}, step_size=$(hmc_step_size_for_lattice_beta "${lattice_size}" "${beta}"), seed=${seed}"
                     run_hmc_evaluation "${lattice_size}" "${beta}" "${seed}"
                 fi
 
@@ -363,7 +383,7 @@ for lattice_size in "${LATTICE_SIZES[@]}"; do
                     && has_accept_rate_in_range "${fthmc_accept_rate_path}" "${EVAL_ACCEPT_RATE_MIN}" "${EVAL_ACCEPT_RATE_MAX}"; then
                     echo ">>> Reusing U(2) FT-HMC evaluation: ${fthmc_path}"
                 else
-                    echo ">>> Evaluating U(2) FT-HMC: L=${lattice_size}, beta=${beta}, train_beta=${TRAIN_BETA}, step_size=$(fthmc_step_size_for_lattice "${lattice_size}"), seed=${seed}"
+                    echo ">>> Evaluating U(2) FT-HMC: L=${lattice_size}, beta=${beta}, train_beta=${TRAIN_BETA}, step_size=$(fthmc_step_size_for_lattice_beta "${lattice_size}" "${beta}"), seed=${seed}"
                     run_fthmc_evaluation "${lattice_size}" "${beta}" "${seed}"
                 fi
             done
