@@ -287,9 +287,8 @@ class FieldTransformation:
 
     def forward(self, theta: torch.Tensor) -> torch.Tensor:
         theta_curr = theta.clone()
-        phase_fn = getattr(self, "ft_phase_compiled", self.ft_phase)
         for index in range(self.n_subsets):
-            theta_curr = theta_curr + phase_fn(theta_curr, index)
+            theta_curr = theta_curr + self.ft_phase(theta_curr, index)
         return theta_curr
 
     def field_transformation(self, theta: torch.Tensor) -> torch.Tensor:
@@ -309,12 +308,11 @@ class FieldTransformation:
 
     def inverse(self, theta: torch.Tensor, *, max_iter: int = 200, tol: float = 1e-6) -> torch.Tensor:
         theta_curr = theta.clone()
-        phase_fn = getattr(self, "ft_phase_compiled", self.ft_phase)
         for index in reversed(range(self.n_subsets)):
             theta_iter = theta_curr.clone()
             diff = torch.tensor(float("inf"), device=self.device)
             for _ in range(max_iter):
-                theta_next = theta_curr - phase_fn(theta_iter, index)
+                theta_next = theta_curr - self.ft_phase(theta_iter, index)
                 denominator = torch.clamp(torch.norm(theta_iter), min=1e-12)
                 diff = torch.norm(theta_next - theta_iter) / denominator
                 theta_iter = theta_next

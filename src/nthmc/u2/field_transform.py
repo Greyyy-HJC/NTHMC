@@ -454,8 +454,7 @@ class FieldTransformation:
         return delta * mask.to(delta.dtype)
 
     def ft_phase(self, links: torch.Tensor, index: int) -> torch.Tensor:
-        delta_fn = getattr(self, "compute_delta_compiled", self.compute_delta)
-        delta = delta_fn(links, index)
+        delta = self.compute_delta(links, index)
         return u2_mul(u2_exp(delta), links)
 
     def _forward_using_compiled_phase(self, links: torch.Tensor) -> torch.Tensor:
@@ -466,9 +465,8 @@ class FieldTransformation:
 
     def forward(self, links: torch.Tensor) -> torch.Tensor:
         links_curr = u2_normalize(links)
-        phase_fn = getattr(self, "ft_phase_compiled", self.ft_phase)
         for index in range(self.n_subsets):
-            links_curr = phase_fn(links_curr, index)
+            links_curr = self.ft_phase(links_curr, index)
         return u2_normalize(links_curr)
 
     def field_transformation(self, links: torch.Tensor) -> torch.Tensor:
@@ -488,12 +486,11 @@ class FieldTransformation:
 
     def inverse(self, links: torch.Tensor, *, max_iter: int = 200, tol: float = 1e-6) -> torch.Tensor:
         links_curr = u2_normalize(links)
-        delta_fn = getattr(self, "compute_delta_compiled", self.compute_delta)
         for index in reversed(range(self.n_subsets)):
             links_iter = links_curr.clone()
             diff = torch.tensor(float("inf"), device=self.device, dtype=links.dtype)
             for _ in range(max_iter):
-                delta = delta_fn(links_iter, index)
+                delta = self.compute_delta(links_iter, index)
                 links_next = u2_mul(u2_exp(-delta), links_curr)
                 relative = u2_log(u2_mul(links_next, u2_conj(links_iter)))
                 denominator = torch.clamp(torch.linalg.norm(u2_log(links_iter)), min=1e-12)

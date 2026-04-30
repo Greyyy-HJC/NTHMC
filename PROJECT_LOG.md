@@ -11,6 +11,7 @@ This is an append-only development history for NTHMC.
 - Updated the U(2) scaling notebook constants to the beta=4.0 training/evaluation presentation target; full notebook execution remains blocked until the beta=4.0 FT-HMC grid is available.
 - Measured the current U(2) FT-HMC path at roughly 30 minutes for a 128-sample L8 probe, making the requested full 2048-sample L8/L16 beta=4.0-8.0 FT-HMC refresh impractical in the local single-GPU run.
 - Split U(1) and U(2) field-transform compile handling into evaluation-only explicit paths, with regular training defaults and separate force-only compiled callables for FT-HMC.
+- Tightened the U(1)/U(2) compile split so regular field transformations stay eager after evaluation compile is enabled.
 
 ## 2026-04-29
 
