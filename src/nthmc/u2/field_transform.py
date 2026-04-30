@@ -55,7 +55,7 @@ class FieldTransformation:
         hyperparams: dict[str, float] | None = None,
         fabric=None,
         backend: str = "eager",
-        compile_enabled: bool = True,
+        compile_enabled: bool = False,
     ) -> None:
         self.lattice_size = lattice_size
         self.device = torch.device(device)
@@ -146,6 +146,21 @@ class FieldTransformation:
         except Exception as exc:
             self.print(f"Warning: torch.compile initialization failed: {exc}")
             self.print("Falling back to standard functions")
+
+    def freeze_models_for_eval(self) -> None:
+        """Freeze model parameters before evaluation-only compiled execution."""
+        for model in self.models:
+            model.eval()
+            for param in model.parameters():
+                param.requires_grad_(False)
+
+    def enable_eval_compile(self, *, backend: str = "inductor") -> None:
+        """Enable torch.compile after models are loaded and frozen for evaluation."""
+        if self.if_check_jac:
+            raise RuntimeError("Evaluation compile is not supported with if_check_jac=True")
+        self.backend = backend
+        self.compile_enabled = True
+        self._init_compiled_functions()
 
     def _masked_loops(self, loops: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         return torch.where(mask, loops, identity_like(loops))

@@ -24,6 +24,8 @@ venv/
 # Workflow output directories
 **/logs/*
 **/artifacts/models/*
+**/dumps/*
+**/plots/*
 
 # Bash scripts
 **/sub*.sh

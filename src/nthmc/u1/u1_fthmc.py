@@ -22,6 +22,9 @@ class HMCU1FT:
         *,
         field_transformation,
         compute_jac_logdet,
+        observable_field_transformation=None,
+        force_field_transformation=None,
+        force_compute_jac_logdet=None,
         device: str = "cpu",
         tune_step_size: bool = True,
     ) -> None:
@@ -31,7 +34,10 @@ class HMCU1FT:
         self.n_steps = n_steps
         self.dt = step_size
         self.field_transformation = field_transformation
+        self.observable_field_transformation = observable_field_transformation or field_transformation
         self.compute_jac_logdet = compute_jac_logdet
+        self.force_field_transformation = force_field_transformation or field_transformation
+        self.force_compute_jac_logdet = force_compute_jac_logdet or compute_jac_logdet
         self.device = torch.device(device)
         self.tune_step_size_enabled = tune_step_size
 
@@ -44,17 +50,19 @@ class HMCU1FT:
         assert action_value.dim() == 0
         return action_value
 
-    def new_action(self, theta_new: torch.Tensor) -> torch.Tensor:
-        theta_ori = self.field_transformation(theta_new)
+    def new_action(self, theta_new: torch.Tensor, *, for_force: bool = False) -> torch.Tensor:
+        field_transformation = self.force_field_transformation if for_force else self.field_transformation
+        compute_jac_logdet = self.force_compute_jac_logdet if for_force else self.compute_jac_logdet
+        theta_ori = field_transformation(theta_new)
         original_action_value = self.original_action(theta_ori)
-        jacobian_log_det = self.compute_jac_logdet(theta_new.unsqueeze(0)).squeeze(0)
+        jacobian_log_det = compute_jac_logdet(theta_new.unsqueeze(0)).squeeze(0)
         action_value = original_action_value - jacobian_log_det
         assert action_value.dim() == 0
         return action_value
 
     def new_force(self, theta_new: torch.Tensor) -> torch.Tensor:
         theta_copy = theta_new.detach().clone().requires_grad_(True)
-        action_value = self.new_action(theta_copy)
+        action_value = self.new_action(theta_copy, for_force=True)
         return torch.autograd.grad(action_value, theta_copy)[0].detach()
 
     def omelyan(self, theta: torch.Tensor, pi: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -127,7 +135,8 @@ class HMCU1FT:
             initial_plaq = []
             for _ in tqdm(range(self.n_thermalization_steps), desc="Initial FT thermalization"):
                 theta, _, _ = self.metropolis_step(theta)
-                theta_ori = regularize(self.field_transformation(theta))
+                with torch.no_grad():
+                    theta_ori = regularize(self.observable_field_transformation(theta))
                 initial_plaq.append(round(float(plaq_mean_from_field(theta_ori).detach().cpu()), 4))
             if len(initial_plaq) >= 10:
                 n_complete = (len(initial_plaq) // 10) * 10
@@ -142,7 +151,8 @@ class HMCU1FT:
         acceptance_count = 0
         for _ in tqdm(range(self.n_thermalization_steps), desc="Thermalizing FT-HMC"):
             theta = regularize(theta)
-            theta_ori = regularize(self.field_transformation(theta))
+            with torch.no_grad():
+                theta_ori = regularize(self.observable_field_transformation(theta))
             plaq_values.append(float(plaq_mean_from_field(theta_ori).detach().cpu()))
             theta, accepted, _ = self.metropolis_step(theta)
             acceptance_count += int(accepted)
@@ -168,7 +178,8 @@ class HMCU1FT:
             acceptance_count += int(accepted)
             if index % store_interval == 0:
                 theta = regularize(theta)
-                theta_ori = regularize(self.field_transformation(theta))
+                with torch.no_grad():
+                    theta_ori = regularize(self.observable_field_transformation(theta))
                 if save_config:
                     configs.append(theta_ori.detach().cpu().clone())
                 plaq_values.append(float(plaq_mean_from_field(theta_ori).detach().cpu()))

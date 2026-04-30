@@ -56,6 +56,9 @@ def load_split_links(data_path: Path) -> torch.Tensor:
 
 def main() -> None:
     args = parse_args()
+    if args.if_compile and args.if_check_jac:
+        raise ValueError("--if_compile cannot be combined with --if_check_jac")
+
     start_time = time.time()
     save_tag = args.save_tag or f"base_train_b{format_beta(args.min_beta)}_L{args.lattice_size}_{args.rand_seed}"
     torch.set_default_dtype(torch.float32)

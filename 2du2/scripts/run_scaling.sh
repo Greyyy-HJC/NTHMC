@@ -8,7 +8,7 @@ PYTHON_BIN=${PYTHON_BIN:-"${REPO_ROOT}/.venv/bin/python"}
 TORCHRUN_BIN=${TORCHRUN_BIN:-"${REPO_ROOT}/.venv/bin/torchrun"}
 
 LATTICE_SIZES_RAW=${LATTICE_SIZES:-"8 16"}
-BETAS_RAW=${BETAS:-"3.0 4.0 5.0 6.0 7.0 8.0"}
+BETAS_RAW=${BETAS:-"4.0 5.0 6.0 7.0 8.0"}
 SEEDS_RAW=${SEEDS:-"1029"}
 read -r -a LATTICE_SIZES <<< "${LATTICE_SIZES_RAW}"
 read -r -a BETAS <<< "${BETAS_RAW}"
@@ -17,8 +17,10 @@ read -r -a SEEDS <<< "${SEEDS_RAW}"
 RUN_GAUGES=${RUN_GAUGES:-1}
 RUN_TRAINING=${RUN_TRAINING:-1}
 RUN_EVALS=${RUN_EVALS:-1}
+RUN_HMC_EVALS=${RUN_HMC_EVALS:-1}
+RUN_FTHMC_EVALS=${RUN_FTHMC_EVALS:-1}
 
-TRAIN_BETA=${TRAIN_BETA:-"3.0"}
+TRAIN_BETA=${TRAIN_BETA:-"4.0"}
 MODEL_TAG=${MODEL_TAG:-"base"}
 DEVICE=${DEVICE:-"cuda"}
 
@@ -31,7 +33,7 @@ GAUGE_N_TUNE_STEPS=${GAUGE_N_TUNE_STEPS:-1000}
 GAUGE_NO_TUNE_STEP_SIZE=${GAUGE_NO_TUNE_STEP_SIZE:-0}
 GAUGE_ACCEPT_RATE_MIN=${GAUGE_ACCEPT_RATE_MIN:-0.55}
 GAUGE_ACCEPT_RATE_MAX=${GAUGE_ACCEPT_RATE_MAX:-0.90}
-SKIP_EXISTING_GAUGES=${SKIP_EXISTING_GAUGES:-1}
+SKIP_EXISTING_GAUGES=${SKIP_EXISTING_GAUGES:-0}
 
 TRAIN_N_EPOCHS=${TRAIN_N_EPOCHS:-16}
 TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-64}
@@ -41,7 +43,7 @@ TRAIN_NPROC_PER_NODE=${TRAIN_NPROC_PER_NODE:-1}
 TRAIN_ACCELERATOR=${TRAIN_ACCELERATOR:-"cuda"}
 TRAIN_STRATEGY=${TRAIN_STRATEGY:-"ddp"}
 TRAIN_DEVICES=${TRAIN_DEVICES:-"auto"}
-SKIP_EXISTING_MODELS=${SKIP_EXISTING_MODELS:-1}
+SKIP_EXISTING_MODELS=${SKIP_EXISTING_MODELS:-0}
 
 EVAL_N_THERMALIZATION=${EVAL_N_THERMALIZATION:-10}
 EVAL_N_CONFIGS=${EVAL_N_CONFIGS:-2048}
@@ -65,7 +67,9 @@ MAX_LAG=${MAX_LAG:-20}
 EVAL_NO_TUNE_STEP_SIZE=${EVAL_NO_TUNE_STEP_SIZE:-1}
 EVAL_ACCEPT_RATE_MIN=${EVAL_ACCEPT_RATE_MIN:-0.55}
 EVAL_ACCEPT_RATE_MAX=${EVAL_ACCEPT_RATE_MAX:-0.95}
-SKIP_EXISTING_EVALS=${SKIP_EXISTING_EVALS:-1}
+EVAL_FTHMC_COMPILE=${EVAL_FTHMC_COMPILE:-0}
+EVAL_FTHMC_COMPILE_BACKEND=${EVAL_FTHMC_COMPILE_BACKEND:-"inductor"}
+SKIP_EXISTING_EVALS=${SKIP_EXISTING_EVALS:-0}
 
 GAUGE_NO_TUNE_ARGS=()
 if [[ "${GAUGE_NO_TUNE_STEP_SIZE}" == "1" ]]; then
@@ -75,6 +79,11 @@ fi
 EVAL_NO_TUNE_ARGS=()
 if [[ "${EVAL_NO_TUNE_STEP_SIZE}" == "1" ]]; then
     EVAL_NO_TUNE_ARGS=(--no_tune_step_size)
+fi
+
+EVAL_FTHMC_COMPILE_ARGS=()
+if [[ "${EVAL_FTHMC_COMPILE}" == "1" ]]; then
+    EVAL_FTHMC_COMPILE_ARGS=(--if_compile --compile_backend "${EVAL_FTHMC_COMPILE_BACKEND}")
 fi
 
 gauge_config_path() {
@@ -334,7 +343,8 @@ run_fthmc_evaluation() {
             --model_tag "${MODEL_TAG}" \
             --save_tag "${save_tag}" \
             --device "${DEVICE}" \
-            "${EVAL_NO_TUNE_ARGS[@]}"
+            "${EVAL_NO_TUNE_ARGS[@]}" \
+            "${EVAL_FTHMC_COMPILE_ARGS[@]}"
     )
 }
 
@@ -365,26 +375,30 @@ for lattice_size in "${LATTICE_SIZES[@]}"; do
 
         if [[ "${RUN_EVALS}" == "1" ]]; then
             for beta in "${BETAS[@]}"; do
-                hmc_path=$(hmc_topo_path "${lattice_size}" "${beta}" "${seed}")
-                hmc_accept_rate_path=$(hmc_accept_rate_path "${lattice_size}" "${beta}" "${seed}")
-                if [[ "${SKIP_EXISTING_EVALS}" == "1" ]] \
-                    && has_enough_eval_configs "${hmc_path}" \
-                    && has_accept_rate_in_range "${hmc_accept_rate_path}" "${EVAL_ACCEPT_RATE_MIN}" "${EVAL_ACCEPT_RATE_MAX}"; then
-                    echo ">>> Reusing standard U(2) HMC evaluation: ${hmc_path}"
-                else
-                    echo ">>> Evaluating standard U(2) HMC: L=${lattice_size}, beta=${beta}, step_size=$(hmc_step_size_for_lattice_beta "${lattice_size}" "${beta}"), seed=${seed}"
-                    run_hmc_evaluation "${lattice_size}" "${beta}" "${seed}"
+                if [[ "${RUN_HMC_EVALS}" == "1" ]]; then
+                    hmc_path=$(hmc_topo_path "${lattice_size}" "${beta}" "${seed}")
+                    hmc_accept_rate_path=$(hmc_accept_rate_path "${lattice_size}" "${beta}" "${seed}")
+                    if [[ "${SKIP_EXISTING_EVALS}" == "1" ]] \
+                        && has_enough_eval_configs "${hmc_path}" \
+                        && has_accept_rate_in_range "${hmc_accept_rate_path}" "${EVAL_ACCEPT_RATE_MIN}" "${EVAL_ACCEPT_RATE_MAX}"; then
+                        echo ">>> Reusing standard U(2) HMC evaluation: ${hmc_path}"
+                    else
+                        echo ">>> Evaluating standard U(2) HMC: L=${lattice_size}, beta=${beta}, step_size=$(hmc_step_size_for_lattice_beta "${lattice_size}" "${beta}"), seed=${seed}"
+                        run_hmc_evaluation "${lattice_size}" "${beta}" "${seed}"
+                    fi
                 fi
 
-                fthmc_path=$(fthmc_topo_path "${lattice_size}" "${beta}" "${seed}")
-                fthmc_accept_rate_path=$(fthmc_accept_rate_path "${lattice_size}" "${beta}" "${seed}")
-                if [[ "${SKIP_EXISTING_EVALS}" == "1" ]] \
-                    && has_enough_eval_configs "${fthmc_path}" \
-                    && has_accept_rate_in_range "${fthmc_accept_rate_path}" "${EVAL_ACCEPT_RATE_MIN}" "${EVAL_ACCEPT_RATE_MAX}"; then
-                    echo ">>> Reusing U(2) FT-HMC evaluation: ${fthmc_path}"
-                else
-                    echo ">>> Evaluating U(2) FT-HMC: L=${lattice_size}, beta=${beta}, train_beta=${TRAIN_BETA}, step_size=$(fthmc_step_size_for_lattice_beta "${lattice_size}" "${beta}"), seed=${seed}"
-                    run_fthmc_evaluation "${lattice_size}" "${beta}" "${seed}"
+                if [[ "${RUN_FTHMC_EVALS}" == "1" ]]; then
+                    fthmc_path=$(fthmc_topo_path "${lattice_size}" "${beta}" "${seed}")
+                    fthmc_accept_rate_path=$(fthmc_accept_rate_path "${lattice_size}" "${beta}" "${seed}")
+                    if [[ "${SKIP_EXISTING_EVALS}" == "1" ]] \
+                        && has_enough_eval_configs "${fthmc_path}" \
+                        && has_accept_rate_in_range "${fthmc_accept_rate_path}" "${EVAL_ACCEPT_RATE_MIN}" "${EVAL_ACCEPT_RATE_MAX}"; then
+                        echo ">>> Reusing U(2) FT-HMC evaluation: ${fthmc_path}"
+                    else
+                        echo ">>> Evaluating U(2) FT-HMC: L=${lattice_size}, beta=${beta}, train_beta=${TRAIN_BETA}, step_size=$(fthmc_step_size_for_lattice_beta "${lattice_size}" "${beta}"), seed=${seed}"
+                        run_fthmc_evaluation "${lattice_size}" "${beta}" "${seed}"
+                    fi
                 fi
             done
         fi

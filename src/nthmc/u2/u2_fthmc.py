@@ -30,6 +30,9 @@ class HMCU2FT:
         *,
         field_transformation,
         compute_jac_logdet,
+        observable_field_transformation=None,
+        force_field_transformation=None,
+        force_compute_jac_logdet=None,
         device: str = "cpu",
         tune_step_size: bool = True,
     ) -> None:
@@ -39,7 +42,10 @@ class HMCU2FT:
         self.n_steps = n_steps
         self.dt = step_size
         self.field_transformation = field_transformation
+        self.observable_field_transformation = observable_field_transformation or field_transformation
         self.compute_jac_logdet = compute_jac_logdet
+        self.force_field_transformation = force_field_transformation or field_transformation
+        self.force_compute_jac_logdet = force_compute_jac_logdet or compute_jac_logdet
         self.device = torch.device(device)
         self.tune_step_size_enabled = tune_step_size
 
@@ -53,10 +59,12 @@ class HMCU2FT:
         assert action_value.dim() == 0
         return action_value
 
-    def new_action(self, links_new: torch.Tensor) -> torch.Tensor:
-        links_ori = self.field_transformation(links_new)
+    def new_action(self, links_new: torch.Tensor, *, for_force: bool = False) -> torch.Tensor:
+        field_transformation = self.force_field_transformation if for_force else self.field_transformation
+        compute_jac_logdet = self.force_compute_jac_logdet if for_force else self.compute_jac_logdet
+        links_ori = field_transformation(links_new)
         original_action_value = self.original_action(links_ori)
-        jacobian_log_det = self.compute_jac_logdet(links_new.unsqueeze(0)).squeeze(0)
+        jacobian_log_det = compute_jac_logdet(links_new.unsqueeze(0)).squeeze(0)
         action_value = original_action_value - jacobian_log_det
         assert action_value.dim() == 0
         return action_value
@@ -69,7 +77,7 @@ class HMCU2FT:
             requires_grad=True,
         )
         varied_links = u2_mul(u2_exp(algebra), links_new.detach())
-        action_value = self.new_action(varied_links)
+        action_value = self.new_action(varied_links, for_force=True)
         return torch.autograd.grad(action_value, algebra)[0].detach()
 
     def update_links(self, links: torch.Tensor, momenta: torch.Tensor, coefficient: float) -> torch.Tensor:
@@ -146,7 +154,8 @@ class HMCU2FT:
             initial_plaq = []
             for _ in tqdm(range(self.n_thermalization_steps), desc="Initial FT thermalization"):
                 links, _, _ = self.metropolis_step(links)
-                links_ori = u2_normalize(self.field_transformation(links))
+                with torch.no_grad():
+                    links_ori = u2_normalize(self.observable_field_transformation(links))
                 initial_plaq.append(round(float(plaquette_mean_from_field(links_ori).detach().cpu()), 4))
             if len(initial_plaq) >= 10:
                 n_complete = (len(initial_plaq) // 10) * 10
@@ -161,7 +170,8 @@ class HMCU2FT:
         acceptance_count = 0
         for _ in tqdm(range(self.n_thermalization_steps), desc="Thermalizing FT-HMC"):
             links = u2_normalize(links)
-            links_ori = u2_normalize(self.field_transformation(links))
+            with torch.no_grad():
+                links_ori = u2_normalize(self.observable_field_transformation(links))
             plaq_values.append(float(plaquette_mean_from_field(links_ori).detach().cpu()))
             links, accepted, _ = self.metropolis_step(links)
             acceptance_count += int(accepted)
@@ -187,7 +197,8 @@ class HMCU2FT:
             acceptance_count += int(accepted)
             if index % store_interval == 0:
                 links = u2_normalize(links)
-                links_ori = u2_normalize(self.field_transformation(links))
+                with torch.no_grad():
+                    links_ori = u2_normalize(self.observable_field_transformation(links))
                 if save_config:
                     configs.append(links_ori.detach().cpu().clone())
                 plaq_values.append(float(plaquette_mean_from_field(links_ori).detach().cpu()))

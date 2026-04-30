@@ -2,6 +2,16 @@
 
 This is an append-only development history for NTHMC.
 
+## 2026-04-30
+
+- Reconfigured the U(2) scaling driver for the beta=4.0 training point, beta=4.0-8.0 evaluation grid, seed 1029, and overwrite-by-default reruns.
+- Removed old U(2) beta=3.0 scaling artifacts while preserving unrelated beta=3.0 exploratory checkpoints.
+- Regenerated the U(2) L8 and L16 beta=4.0 gauge ensembles and retrained the corresponding base scaling checkpoints.
+- Refreshed the full 2048-sample standard HMC evaluations for U(2) L8/L16 beta=4.0-8.0 and verified acceptance rates in the requested range.
+- Updated the U(2) scaling notebook constants to the beta=4.0 training/evaluation presentation target; full notebook execution remains blocked until the beta=4.0 FT-HMC grid is available.
+- Measured the current U(2) FT-HMC path at roughly 30 minutes for a 128-sample L8 probe, making the requested full 2048-sample L8/L16 beta=4.0-8.0 FT-HMC refresh impractical in the local single-GPU run.
+- Split U(1) and U(2) field-transform compile handling into evaluation-only explicit paths, with regular training defaults and separate force-only compiled callables for FT-HMC.
+
 ## 2026-04-29
 
 - Replaced the U(1) base field-transformation module with the optimized sin/cos implementation including rectangle-loop terms.

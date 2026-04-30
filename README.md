@@ -55,6 +55,7 @@ For environments where editable installs are not available, `pip install -r requ
 ## 2D U(1) Base Workflow
 
 The implemented U(1) flow mirrors the necessary parts of `Scaling_FT_HMC`: gauge generation, base model training, and FT-HMC evaluation.
+Training runs without `torch.compile` by default. FT-HMC evaluation exposes `--if_compile --compile_backend <backend>` for explicit evaluation-only compile probes; the compiled path is used only for force calculations, while observables use the regular transform.
 
 ```bash
 cd /eagle/fthmc/run/NTHMC/2du1/gauge_generation
@@ -136,7 +137,7 @@ Z_U2 = I_0(x)^2 - I_1(x)^2
 
 The base U(2) field transformation uses plaquette and rectangle loop terms projected into trace/traceless sin-like and cos-like U(2) algebra components. It is not volume preserving: the FT-HMC action includes an exact Jacobian computed as `4x4` active-link tangent blocks. Older U(2) base checkpoints from the previous volume-preserving transform are not compatible and need to be retrained.
 
-U(2) training runs in eager mode by default. Add `--if_check_jac` for small diagnostic runs that compare the manual active-link Jacobian with an autograd Jacobian, and add `--if_compile` only when the local PyTorch backend benefits from `torch.compile`.
+U(2) training runs without `torch.compile` by default. Add `--if_check_jac` only for small diagnostic runs that compare the manual active-link Jacobian with an autograd Jacobian; it cannot be combined with `--if_compile`. FT-HMC evaluation exposes `--if_compile --compile_backend <backend>` for explicit evaluation-only compile probes, using compiled callables only on the force path.
 
 ```bash
 cd /eagle/fthmc/run/NTHMC/2du2/gauge_generation
