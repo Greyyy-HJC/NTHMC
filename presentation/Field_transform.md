@@ -1,336 +1,343 @@
 # Detailed Comparison: 2D U(1) vs 2D U(2) Field Transformations
 
+This note documents the field transformations implemented in:
+
+- `src/nthmc/u1/field_transform.py`
+- `src/nthmc/u2/field_transform.py`
+- `src/nthmc/u1/models.py`
+- `src/nthmc/u2/models.py`
+
+The key structural distinction is:
+
+- U(1): scalar active-link Jacobian factor.
+- U(2): local $4\times 4$ active-link Jacobian block.
+
+---
+
 ## 1. Core Principle: Gauge Covariance
 
 Gauge transformation:
 $$
-U_{x,\mu} \rightarrow G_x U_{x,\mu} G_{x+\hat\mu}^\dagger
+U_{x,\mu} \rightarrow G_x U_{x,\mu} G_{x+\hat\mu}^\dagger .
 $$
 
-A valid field transformation \(F\) must **commute with gauge transformation**:
+A field transformation $F$ satisfies:
 $$
-F(GUG^\dagger) = G F(U) G^\dagger
+F(GUG^\dagger) = G F(U) G^\dagger .
 $$
 
-### Consequence
+Transformations are built from local Wilson loops:
 
-The transformation must be built from **gauge-covariant objects**, i.e.:
+- plaquettes
+- $1\times2$, $2\times1$ rectangles
 
-- Wilson loops (plaquette, rectangle, etc.)
-- Local gauge-covariant combinations
+Links are split into 8 checkerboard subsets:
+$$
+(\mu,\ x\bmod 2,\ y\bmod 2).
+$$
 
-This is the fundamental constraint on allowed terms.
+Each layer updates one subset. Active links in the same subset are independent within that layer.
 
 ---
 
-## 2. 2D U(1) Field Transformation
+## 2. U(1) Field Transformation
 
-### Link variable
-
-$$
-U_{x,\mu} = e^{i\theta_{x,\mu}}
-$$
-
-### Transformation
-
-$$
-U'_{x,\mu} = e^{i\Delta\theta_{x,\mu}} U_{x,\mu}
-$$
-
-with
-
-$$
-\Delta\theta_{x,\mu}
-=
-\sum_p \left[
-\epsilon_p^{(s)} \sin(\theta_p)
-+
-\epsilon_p^{(c)} \cos(\theta_p)
-\right]
-+
-\sum_r \left[
-\epsilon_r^{(s)} \sin(\theta_r)
-+
-\epsilon_r^{(c)} \cos(\theta_r)
-\right]
-$$
-
-### Interpretation
-
-- \(\sin\theta\): Lie algebra projection of loop
-- \(\cos\theta\): additional basis allowed by symmetry
-
-### Key properties
-
-- Abelian → commuting
-- Scalar degree of freedom
-- Transform is additive
-
----
-
-## 3. U(1) Jacobian
-
-Because everything commutes:
+### Update rule
 
 $$
 \theta' = \theta + \Delta\theta(\theta)
 $$
 
-$$
-J = 1 + \frac{\partial \Delta\theta}{\partial \theta}
-$$
+Each active link is updated independently.
 
-Example:
+### Jacobian
 
 $$
-J
-=
-1
-+
-\sum_p \left[
-\epsilon_p^{(s)} \cos(\theta_p)
--
-\epsilon_p^{(c)} \sin(\theta_p)
-\right]
-+
-\sum_r \left[
-\epsilon_r^{(s)} \cos(\theta_r)
--
-\epsilon_r^{(c)} \sin(\theta_r)
-\right]
+J = 1 + \frac{\partial \Delta\theta}{\partial\theta}
 $$
 
-So:
-
+If
 $$
-\log \det J
-=
-\log\!\left(
-1 + \frac{\partial \Delta\theta}{\partial \theta}
-\right)
+\left|\frac{\partial \Delta\theta}{\partial\theta}\right| < 1
+$$
+then
+$$
+J > 0
 $$
 
-This is why U(1) is simple.
+Thus each layer is strictly monotone and invertible.
 
 ---
 
-## 4. 2D U(2) Field Transformation
+## 3. U(2) Field Transformation
 
-### Link variable
-
-$$
-U_{x,\mu} \in U(2)
-$$
-
-### Transformation
+### Representation
 
 $$
-U'_{x,\mu} = e^{i\Delta_{x,\mu}(U)} U_{x,\mu}
+U = (\phi, q), \quad q \in SU(2)
 $$
 
-where
+### Update rule
 
 $$
-\Delta_{x,\mu} \in u(2)
+U' = \exp(\Delta(U)) \, U
 $$
 
 $$
-\Delta = a_0 I + \sum_{a=1}^3 a_a \sigma^a
+\Delta(U) \in u(2)
 $$
+
+### Key structural property
+
+**CNN coefficients depend only on frozen subsets**, not on active links:
+$$
+\frac{\partial k}{\partial U_{\text{active}}} = 0
+$$
+
+Thus Jacobian derivatives only arise from loop features.
 
 ---
 
-## 5. Allowed Terms in U(2)
+## 4. U(2) Jacobian Structure
 
-Given a Wilson loop \(W_l \in U(2)\):
-
-### Sin-like (Lie algebra projection)
-
+Introduce tangent perturbation:
 $$
-S(W) = \frac{W - W^\dagger}{2i}
+U_X = \exp(X)U
 $$
 
-### Cos-like (Hermitian part)
-
-$$
-C(W) = \frac{W + W^\dagger}{2}
-$$
-
-These generalize:
-
-$$
-\sin\theta \rightarrow S(W), \quad \cos\theta \rightarrow C(W)
-$$
-
----
-
-## 6. Trace vs Traceless Decomposition
-
-Each matrix splits into:
-
-$$
-S = S^{\text{trace}} + S^{\text{traceless}}
-$$
-$$
-C = C^{\text{trace}} + C^{\text{traceless}}
-$$
-
-So full basis per loop:
-
-- sin-like trace
-- sin-like traceless
-- cos-like trace
-- cos-like traceless
-
----
-
-## 7. Full U(2) Transform Structure
-
-$$
-\Delta_{x,\mu}
-=
-\sum_l \Big[
-\epsilon_l^{(S,\text{tr})} S_l^{\text{tr}}
-+
-\epsilon_l^{(S,\text{tl})} S_l^{\text{tl}}
-+
-\epsilon_l^{(C,\text{tr})} C_l^{\text{tr}}
-+
-\epsilon_l^{(C,\text{tl})} C_l^{\text{tl}}
-\Big]
-$$
-
-with loops:
-
-- plaquette
-- rectangle
-
----
-
-## 8. Key Difference: Non-Abelian Nature
-
-| Feature | U(1) | U(2) |
-|------|------|------|
-| Algebra dim | 1 | 4 |
-| Commutativity | Yes | No |
-| Transform | additive | exponential |
-| Basis | sin, cos | matrix projections |
-| Jacobian | scalar | matrix |
-
----
-
-## 9. U(2) Jacobian
-
-Define local perturbation:
-
-$$
-U_X = e^{iX} U
-$$
-
-Apply transform:
-
-$$
-U'_X = F(U_X)
-$$
-
-Extract output tangent:
-
+Output tangent:
 $$
 Y = \log(U'_X U'^\dagger)
 $$
 
-Then:
+Jacobian:
+$$
+J = \frac{\partial Y}{\partial X}
+$$
+
+Each active link contributes a $4\times4$ real matrix.
+
+---
+
+## 5. Decomposition of the Jacobian
 
 $$
-J_{AB} = \frac{\partial Y^A}{\partial X^B}
+J = Q + E
 $$
 
-Each link → 4×4 Jacobian block.
+where:
 
-In the implementation, the manual U(2) Jacobian propagates active-link tangent vectors through the plaquette and rectangle loops, then accumulates the log determinant of these local blocks. Small diagnostic runs can compare this path against an autograd Jacobian.
+- $Q = \mathrm{Ad}_{\exp(\Delta)}$
+- $E = D\exp_\Delta[D\Delta]$
 
-Total:
+Here $D$ means the differential, or first-order linearization, of a map:
 
+- $D\Delta$ maps an input tangent $X$ to the induced first-order change in the algebra update $\Delta(U)$.
+- $D\exp_\Delta[\cdot]$ maps that first-order algebra change through the exponential map at the base point $\Delta$.
+
+Thus $E$ is the part of the output tangent caused by the active-link dependence of $\Delta(U)$. It is shorthand for the linear map:
 $$
-\log \det J = \sum_{\text{links}} \log \det J_{\text{local}}
+X
+\mapsto
+D\exp_\Delta\!\left[D\Delta[X]\right].
+$$
+
+### Property of $Q$
+
+In the chosen orthonormal basis of $u(2)=u(1)\oplus su(2)$:
+
+- $Q$ is orthogonal
+- $\|Q\|_2 = 1$
+- $\det Q = 1$
+
+---
+
+## 6. Invertibility Condition
+
+We write:
+$$
+J = Q(I + Q^{-1}E)
+$$
+
+If
+$$
+\|E\|_2 < 1
+$$
+
+then
+$$
+\|Q^{-1}E\|_2 < 1
+$$
+
+and therefore $I + Q^{-1}E$ is invertible via Neumann series:
+$$
+(I + Q^{-1}E)^{-1} = \sum_{n=0}^{\infty}(-Q^{-1}E)^n
+$$
+
+Thus:
+$$
+\boxed{J \text{ is non-singular}}
 $$
 
 ---
 
-## 10. Why U(2) is Harder
+## 7. Current U(2) Base Caps
 
-Because:
-
+The current U(2) `base` model returns:
 $$
-e^{A+B} \neq e^A e^B
-$$
-
-and:
-
-$$
-\delta e^{i\Delta} \neq i\,\delta\Delta\, e^{i\Delta}
+k_{\rm plaq} = \frac{\tanh z_{\rm plaq}}{5},
+\qquad
+k_{\rm rect} = \frac{\tanh z_{\rm rect}}{40}.
 $$
 
-Non-commutativity introduces:
+Since $\tanh z$ is strictly bounded by 1 for finite real $z$:
+$$
+|k_{\rm plaq}| < \frac{1}{5},
+\qquad
+|k_{\rm rect}| < \frac{1}{40}.
+$$
 
-- adjoint rotation
-- BCH corrections
-- non-trivial tangent map
+These caps apply to all 16 plaquette coefficient channels and all 32 rectangle coefficient channels.
+
+For one U(2) loop, the sin-like and cos-like coefficient groups give the conservative derivative bound:
+$$
+\|D\Delta_l\|_2 \le 2c_l.
+$$
+
+For one active link:
+
+- 2 plaquette loops contribute.
+- 4 rectangle loops contribute.
+
+Therefore:
+$$
+\|E\|_2
+\le
+4c_{\rm plaq} + 8c_{\rm rect}.
+$$
+
+The current caps give:
+$$
+4c_{\rm plaq}+8c_{\rm rect}
+<
+4\cdot\frac15
++
+8\cdot\frac1{40}
+=
+1.
+$$
+
+Thus the current caps imply $\|E\|_2<1$, which is exactly the sufficient condition used above. This is why the present `base` caps guarantee that every local U(2) active-link Jacobian block is invertible in real arithmetic.
+
+Numerically, the margin is small when `tanh` saturates close to 1, but the mathematical bound is strict because the coefficient caps are strict.
 
 ---
 
-## 11. Subset Trick
+## 8. Determinant Sign
 
-Split lattice into 8 subsets:
-
+Define:
 $$
-(x \bmod 2, y \bmod 2, \mu)
-$$
-
-Ensures:
-
-$$
-\frac{\partial \Delta(x)}{\partial U(y)} = 0 \quad (x \neq y)
+J(t) = Q + tE, \quad t \in [0,1]
 $$
 
-→ Jacobian becomes block diagonal.
-
----
-
-## 12. Final Comparison
-
-### U(1):
-
+Since
 $$
-\theta \rightarrow \theta + \Delta\theta
+\|Q^{-1} tE\|_2 < 1
+$$
+for all $t$, $J(t)$ is non-singular along the path.
+
+Thus determinant cannot cross zero.
+
+Since:
+$$
+\det J(0) = \det Q = 1 > 0
 $$
 
+we conclude:
 $$
-\log \det J = \log(1 + \partial \Delta\theta)
+\boxed{\det J > 0}
 $$
 
 ---
 
-### U(2):
+## 9. Global Invertibility
 
+Each layer updates disjoint subsets → block factorization:
+
+- U(1): scalar factors
+- U(2): $4\times4$ blocks
+
+For a U(2) subset layer:
 $$
-U \rightarrow e^{i\Delta(U)} U
+\det J_{\rm layer}
+=
+\prod_{\ell\in{\rm active}}
+\det J_\ell .
 $$
 
+Since the current caps make every local block $J_\ell$ non-singular with positive determinant, every subset layer is a local diffeomorphism.
+
+To upgrade this from local to global invertibility, introduce the scaled layer:
 $$
-\log \det J = \sum \log \det \left(\frac{\partial Y}{\partial X}\right)
+F_{i,t}(U)=\exp(t\Delta_i(U))U,
+\qquad
+t\in[0,1].
 $$
+
+At $t=0$, this is the identity map. For every $t\in[0,1]$, the perturbation bound scales as:
+$$
+\|E_t\|_2
+\le
+t(4c_{\rm plaq}+8c_{\rm rect})
+<1.
+$$
+
+Therefore every $F_{i,t}$ is a local diffeomorphism along a continuous homotopy from the identity to the actual subset layer $F_{i,1}$.
+
+The full U(2) lattice field lives on a finite product of compact connected U(2) manifolds. A local diffeomorphism on this compact connected manifold is a covering map. Since $F_{i,1}$ is homotopic to the identity through non-singular maps, it has degree 1, so the covering has one sheet. Therefore each subset layer is a global diffeomorphism.
+
+Full transform:
+$$
+F = F_7 \circ \cdots \circ F_0
+$$
+
+Composition of globally invertible subset layers gives a globally invertible field transformation.
 
 ---
 
-## 13. Key Insight
+## 10. Final Conclusions
 
-U(2) is not just adding more terms.
+### U(1)
 
-It fundamentally changes:
+- Jacobian scalar
+- strictly positive
+- globally invertible
 
-- scalar → Lie algebra vector
-- commuting → non-commuting
-- derivative → tangent map
+### U(2)
 
-This is the conceptual jump from U(1) to non-Abelian gauge theory.
+Under assumptions:
+
+- CNN depends only on frozen subsets
+- current `base` coefficient caps hold
+
+We have:
+
+$$
+\boxed{
+\text{The full U(2) base field transformation is globally invertible}
+}
+$$
+
+This is a mathematical exact-arithmetic statement. Numerically, the current caps have little margin near saturated `tanh`, and the implemented inverse still relies on fixed-point iteration convergence.
+
+---
+
+## 11. Summary
+
+| Property | U(1) | U(2) |
+|---|---|---|
+| Jacobian type | scalar | $4\times4$ block |
+| Positive definite | trivial | not applicable |
+| Non-singular | guaranteed | guaranteed by current `base` caps |
+| Determinant sign | positive | positive |
+| Invertibility | global | global for current `base` caps |
