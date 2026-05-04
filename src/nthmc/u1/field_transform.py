@@ -70,6 +70,7 @@ class FieldTransformation:
             "weight_decay": 0.0001,
             "factor": 0.5,
             "patience": 5,
+            "max_grad_norm": 10.0,
         }
         if hyperparams:
             self.hyperparams.update(hyperparams)
@@ -110,6 +111,17 @@ class FieldTransformation:
         ]
 
         self._init_compiled_functions()
+
+    def _clip_gradients(self) -> None:
+        max_norm = float(self.hyperparams.get("max_grad_norm", 0.0))
+        if max_norm <= 0:
+            return
+        params: list[torch.nn.Parameter] = []
+        for model in self.models:
+            params.extend(p for p in model.parameters() if p.requires_grad)
+        if not params:
+            return
+        torch.nn.utils.clip_grad_norm_(params, max_norm)
 
     def _init_compiled_functions(self) -> None:
         """Prepare compiled callables and fall back to regular methods if unavailable."""
@@ -420,6 +432,7 @@ class FieldTransformation:
         for optimizer in self.optimizers:
             optimizer.zero_grad()
         self.backward(loss)
+        self._clip_gradients()
         for optimizer in self.optimizers:
             optimizer.step()
         return float(loss.detach().cpu())

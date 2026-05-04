@@ -43,6 +43,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=None)
     parser.add_argument("--weight_decay", type=float, default=None)
     parser.add_argument("--init_std", type=float, default=None)
+    parser.add_argument("--max_grad_norm", type=float, default=None)
+    parser.add_argument("--plateau_factor", type=float, default=None)
+    parser.add_argument("--plateau_patience", type=int, default=None)
     parser.add_argument("--accelerator", type=str, default="cuda")
     parser.add_argument("--strategy", type=str, default="ddp")
     parser.add_argument("--devices", default="auto")
@@ -83,6 +86,12 @@ def main() -> None:
         hyperparams["weight_decay"] = args.weight_decay
     if args.init_std is not None:
         hyperparams["init_std"] = args.init_std
+    if args.max_grad_norm is not None:
+        hyperparams["max_grad_norm"] = args.max_grad_norm
+    if args.plateau_factor is not None:
+        hyperparams["factor"] = args.plateau_factor
+    if args.plateau_patience is not None:
+        hyperparams["patience"] = float(args.plateau_patience)
 
     fabric.print("=" * 60)
     fabric.print(">>> U(2) base field-transformation training")
@@ -91,7 +100,7 @@ def main() -> None:
     fabric.print(f"save_tag: {save_tag}")
     fabric.print(f"resolved_device: {device}")
     fabric.print(f"torch_cuda_device_count: {torch.cuda.device_count()}")
-    fabric.print(f"hyperparams: {hyperparams}")
+    fabric.print(f"hyperparams (CLI overrides): {hyperparams}")
     fabric.print("=" * 60)
 
     field_transform = FieldTransformation(
@@ -110,6 +119,7 @@ def main() -> None:
         fabric=fabric,
         compile_enabled=args.if_compile,
     )
+    fabric.print(f"resolved hyperparams: {field_transform.hyperparams}")
 
     if args.continue_beta is not None:
         field_transform.load_best_model(args.continue_beta)

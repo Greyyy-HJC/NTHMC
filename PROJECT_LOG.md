@@ -2,6 +2,11 @@
 
 This is an append-only development history for NTHMC.
 
+## 2026-05-03
+
+- Tightened U(2) default field-transformation training (lower base LR, light weight decay, `ReduceLROnPlateau` patience 1) and added global gradient clipping after the shared backward in U(1)/U(2) `FieldTransformation.train_step`.
+- Extended `2du1` and `2du2` `model_training/train.py` with optional `--max_grad_norm`, `--plateau_factor`, and `--plateau_patience`, and log the merged `hyperparams` after construction.
+
 ## 2026-04-30
 
 - Reconfigured the U(2) scaling driver for the beta=4.0 training point, beta=4.0-8.0 evaluation grid, seed 1029, and overwrite-by-default reruns.
