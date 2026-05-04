@@ -46,6 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_grad_norm", type=float, default=None)
     parser.add_argument("--plateau_factor", type=float, default=None)
     parser.add_argument("--plateau_patience", type=int, default=None)
+    parser.add_argument("--early_stop_patience", type=int, default=None)
     parser.add_argument("--accelerator", type=str, default="cuda")
     parser.add_argument("--strategy", type=str, default="ddp")
     parser.add_argument("--devices", default="auto")
@@ -92,6 +93,8 @@ def main() -> None:
         hyperparams["factor"] = args.plateau_factor
     if args.plateau_patience is not None:
         hyperparams["patience"] = float(args.plateau_patience)
+    if args.early_stop_patience is not None:
+        hyperparams["early_stop_patience"] = args.early_stop_patience
 
     fabric.print("=" * 60)
     fabric.print(">>> U(2) base field-transformation training")

@@ -81,6 +81,7 @@ class FieldTransformation:
             "factor": 0.5,
             "patience": 1,
             "max_grad_norm": 10.0,
+            "early_stop_patience": 3,
         }
         if hyperparams:
             self.hyperparams.update(hyperparams)
@@ -742,6 +743,9 @@ class FieldTransformation:
         train_losses: list[float] = []
         test_losses: list[float] = []
         best_loss = float("inf")
+        best_epoch = -1
+        epochs_without_improvement = 0
+        early_stop_patience = int(self.hyperparams.get("early_stop_patience", 0))
 
         for epoch in tqdm(range(n_epochs), desc="Training epochs"):
             self._set_models_mode(True)
@@ -749,7 +753,7 @@ class FieldTransformation:
                 (self.train_step(batch), len(batch))
                 for batch in tqdm(train_loader, desc=f"Epoch {epoch + 1}/{n_epochs}")
             ]
-            train_loss = self._weighted_epoch_loss(epoch_losses)
+            train_loss = self._global_weighted_epoch_loss(epoch_losses)
             train_losses.append(train_loss)
 
             self._set_models_mode(False)
@@ -757,19 +761,36 @@ class FieldTransformation:
                 (self.evaluate_step(batch), len(batch))
                 for batch in tqdm(test_loader, desc="Evaluating")
             ]
-            test_loss = self._weighted_epoch_loss(test_epoch_losses)
+            test_loss = self._global_weighted_epoch_loss(test_epoch_losses)
             test_losses.append(test_loss)
+
+            improved = test_loss < best_loss
+            if improved:
+                self.save_best_model(epoch, test_loss)
+                best_loss = test_loss
+                best_epoch = epoch
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
+            for scheduler in self.schedulers:
+                scheduler.step(test_loss)
 
             self.print(
                 f"Epoch {epoch + 1}/{n_epochs} - "
-                f"Train Loss: {train_loss:.6f} - Test Loss: {test_loss:.6f}"
+                f"Train Loss: {train_loss:.6f} - Test Loss: {test_loss:.6f} - "
+                f"LR: {self._format_learning_rates()}"
             )
             self._maybe_log_inverse_diagnostics(test_data, batch_size, epoch + 1, n_epochs)
-            if test_loss < best_loss:
-                self.save_best_model(epoch, test_loss)
-                best_loss = test_loss
-            for scheduler in self.schedulers:
-                scheduler.step(test_loss)
+            if (
+                early_stop_patience > 0
+                and best_epoch >= 0
+                and epochs_without_improvement >= early_stop_patience
+            ):
+                self.print(
+                    f"Early stopping at epoch {epoch + 1}; "
+                    f"best epoch {best_epoch + 1} with test loss {best_loss:.6f}"
+                )
+                break
 
         self.plot_training_history(train_losses, test_losses)
         if self.fabric is not None:
@@ -786,6 +807,24 @@ class FieldTransformation:
         if total_count == 0:
             return float("nan")
         return float(sum(loss * count for loss, count in losses_and_counts) / total_count)
+
+    def _global_weighted_epoch_loss(self, losses_and_counts: list[tuple[float, int]]) -> float:
+        local_loss_sum = sum(loss * count for loss, count in losses_and_counts)
+        local_count = sum(count for _, count in losses_and_counts)
+        totals = torch.tensor([local_loss_sum, local_count], device=self.device, dtype=torch.float64)
+        if self.fabric is not None:
+            totals = self.fabric.all_reduce(totals, reduce_op="sum")
+        total_count = float(totals[1].item())
+        if total_count == 0:
+            return float("nan")
+        return float((totals[0] / totals[1]).item())
+
+    def _format_learning_rates(self) -> str:
+        rates = []
+        for optimizer in self.optimizers:
+            rates.extend(float(group["lr"]) for group in optimizer.param_groups)
+        unique_rates = sorted(set(rates))
+        return ",".join(f"{rate:.3e}" for rate in unique_rates)
 
     def checkpoint_path(self, train_beta: float) -> Path:
         return self.model_dir / f"best_model_train_beta{format_beta(train_beta)}_{self.save_tag}.pt"
