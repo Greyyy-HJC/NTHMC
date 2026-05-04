@@ -131,6 +131,14 @@ class FieldTransformation:
             return
         torch.nn.utils.clip_grad_norm_(params, max_norm)
 
+    def _gradient_norm(self) -> float:
+        norm_sq = 0.0
+        for model in self.models:
+            for param in model.parameters():
+                if param.grad is not None:
+                    norm_sq += float(torch.sum(param.grad.detach() ** 2).cpu())
+        return norm_sq**0.5
+
     def _init_compiled_functions(self) -> None:
         """Prepare compiled callables and fall back to regular methods if unavailable."""
         self.compute_delta_compiled = self.compute_delta
@@ -669,6 +677,26 @@ class FieldTransformation:
             total_action = self.compute_action_compiled(varied_links, beta)
         return torch.autograd.grad(total_action.sum(), algebra, create_graph=True)[0]
 
+    def compute_transformed_force_terms(
+        self,
+        links: torch.Tensor,
+        beta: float,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        algebra = torch.zeros(
+            (*links.shape[:-1], 4),
+            device=self.device,
+            dtype=links.dtype,
+            requires_grad=True,
+        )
+        varied_links = u2_mul(u2_exp(algebra), links.detach())
+        links_ori = self.forward_compiled(varied_links)
+        action = self.compute_action_compiled(links_ori, beta)
+        jac_logdet = self.compute_jac_logdet_compiled(varied_links)
+        action_force = torch.autograd.grad(action.sum(), algebra, retain_graph=True)[0]
+        jac_force = torch.autograd.grad(jac_logdet.sum(), algebra)[0]
+        total_force = action_force - jac_force
+        return total_force, action_force, jac_force, jac_logdet
+
     def loss_fn(self, links_ori: torch.Tensor) -> torch.Tensor:
         if self.train_beta is None:
             raise RuntimeError("train_beta is not set")
@@ -684,12 +712,87 @@ class FieldTransformation:
         )
         return loss_per_config.mean()
 
-    def _maybe_log_inverse_diagnostics(
+    def _force_loss_components(self, force: torch.Tensor) -> dict[str, float]:
+        volume = self.lattice_size * self.lattice_size
+        force_flat = force.reshape(force.shape[0], -1)
+        return {
+            "l2": float((torch.linalg.vector_norm(force_flat, ord=2, dim=1) / (volume**0.5)).mean().detach().cpu()),
+            "l4": float((torch.linalg.vector_norm(force_flat, ord=4, dim=1) / (volume**0.25)).mean().detach().cpu()),
+            "l6": float(
+                (torch.linalg.vector_norm(force_flat, ord=6, dim=1) / (volume ** (1 / 6))).mean().detach().cpu()
+            ),
+            "l8": float(
+                (torch.linalg.vector_norm(force_flat, ord=8, dim=1) / (volume ** (1 / 8))).mean().detach().cpu()
+            ),
+        }
+
+    def _parameter_diagnostics(self) -> tuple[float, float]:
+        norm_sq = 0.0
+        max_abs = 0.0
+        for model in self.models:
+            for param in model.parameters():
+                detached = param.detach()
+                norm_sq += float(torch.sum(detached**2).cpu())
+                max_abs = max(max_abs, float(torch.max(torch.abs(detached)).cpu()))
+        return norm_sq**0.5, max_abs
+
+    def _delta_diagnostics(self, links: torch.Tensor) -> tuple[float, float]:
+        volume = self.lattice_size * self.lattice_size
+        links_curr = u2_normalize(links)
+        delta_norms = []
+        for index in range(self.n_subsets):
+            delta = self.compute_delta(links_curr, index)
+            delta_norms.append(torch.linalg.vector_norm(delta.reshape(delta.shape[0], -1), dim=1) / (volume**0.5))
+            links_curr = u2_mul(u2_exp(delta), links_curr)
+        if not delta_norms:
+            return 0.0, 0.0
+        stacked = torch.stack(delta_norms, dim=1)
+        return float(stacked.mean().cpu()), float(stacked.max().cpu())
+
+    def _coefficient_diagnostics(self, links: torch.Tensor) -> dict[str, float]:
+        k0_abs = []
+        k1_abs = []
+        links_curr = u2_normalize(links)
+        for index in range(self.n_subsets):
+            plaq = plaquette_from_field_batch(links_curr)
+            rect = rectangle_from_field_batch(links_curr)
+            plaq_loops = self._plaq_loop_stack(plaq)
+            rect_loops = self._rect_loop_stack(rect)
+            k0, k1 = self.compute_k0_k1(links_curr, index, plaq, rect)
+            k0_abs.append(torch.abs(k0).reshape(k0.shape[0], -1))
+            k1_abs.append(torch.abs(k1).reshape(k1.shape[0], -1))
+            delta = self._plaq_delta(k0, plaq_loops) + self._rect_delta(k1, rect_loops)
+            mask = get_link_mask(index, links.shape[0], self.lattice_size, self.device)
+            links_curr = u2_mul(u2_exp(delta * mask.to(delta.dtype)), links_curr)
+        if not k0_abs or not k1_abs:
+            return {
+                "k0_abs_mean": 0.0,
+                "k0_abs_max": 0.0,
+                "k0_sat_frac": 0.0,
+                "k1_abs_mean": 0.0,
+                "k1_abs_max": 0.0,
+                "k1_sat_frac": 0.0,
+            }
+        k0_all = torch.cat(k0_abs, dim=1)
+        k1_all = torch.cat(k1_abs, dim=1)
+        k0_cap = 1 / 6
+        k1_cap = 1 / 45
+        return {
+            "k0_abs_mean": float(k0_all.mean().cpu()),
+            "k0_abs_max": float(k0_all.max().cpu()),
+            "k0_sat_frac": float((k0_all > 0.95 * k0_cap).to(torch.float32).mean().cpu()),
+            "k1_abs_mean": float(k1_all.mean().cpu()),
+            "k1_abs_max": float(k1_all.max().cpu()),
+            "k1_sat_frac": float((k1_all > 0.95 * k1_cap).to(torch.float32).mean().cpu()),
+        }
+
+    def _maybe_log_training_diagnostics(
         self,
         test_data: torch.Tensor,
         batch_size: int,
         epoch_display: int,
         n_epochs: int,
+        grad_norm: float,
     ) -> None:
         if self.fabric is not None and self.fabric.global_rank != 0:
             return
@@ -703,6 +806,19 @@ class FieldTransformation:
             x0 = u2_normalize(probe)
             rt = u2_mul(recon, u2_conj(x0))
             rt_err = torch.linalg.norm(u2_log(rt).reshape(probe.shape[0], -1), dim=1).mean().item()
+            delta_mean, delta_max = self._delta_diagnostics(inv)
+            coefficient_diag = self._coefficient_diagnostics(inv)
+            param_norm, param_max = self._parameter_diagnostics()
+        with torch.enable_grad():
+            force, action_force, jac_force, jac_logdet = self.compute_transformed_force_terms(
+                inv.detach(),
+                self.train_beta,
+            )
+            force_components = self._force_loss_components(force)
+            action_force_components = self._force_loss_components(action_force)
+            jac_force_components = self._force_loss_components(jac_force)
+        jac_logdet = jac_logdet.detach()
+        jac_std = jac_logdet.std(unbiased=False).item()
         self.print(
             f"Epoch {epoch_display}/{n_epochs} inverse_diag: "
             f"max_final_diff={diag['max_final_diff']:.2e} "
@@ -710,17 +826,49 @@ class FieldTransformation:
             f"n_subsets_not_converged={diag['n_not_converged']} "
             f"round_trip_mean_log_norm={rt_err:.2e}"
         )
+        self.print(
+            f"Epoch {epoch_display}/{n_epochs} train_diag: "
+            f"grad_norm_pre_clip={grad_norm:.2e} "
+            f"param_norm={param_norm:.2e} param_max_abs={param_max:.2e} "
+            f"delta_norm_mean={delta_mean:.2e} delta_norm_max={delta_max:.2e} "
+            f"k0_abs_mean={coefficient_diag['k0_abs_mean']:.2e} "
+            f"k0_abs_max={coefficient_diag['k0_abs_max']:.2e} "
+            f"k0_sat_frac={coefficient_diag['k0_sat_frac']:.3f} "
+            f"k1_abs_mean={coefficient_diag['k1_abs_mean']:.2e} "
+            f"k1_abs_max={coefficient_diag['k1_abs_max']:.2e} "
+            f"k1_sat_frac={coefficient_diag['k1_sat_frac']:.3f} "
+            f"jac_logdet_mean={jac_logdet.mean().item():.2e} "
+            f"jac_logdet_std={jac_std:.2e} "
+            f"jac_logdet_min={jac_logdet.min().item():.2e} "
+            f"jac_logdet_max={jac_logdet.max().item():.2e} "
+            f"force_l2={force_components['l2']:.6f} "
+            f"force_l4={force_components['l4']:.6f} "
+            f"force_l6={force_components['l6']:.6f} "
+            f"force_l8={force_components['l8']:.6f}"
+        )
+        self.print(
+            f"Epoch {epoch_display}/{n_epochs} force_split_diag: "
+            f"action_l2={action_force_components['l2']:.6f} "
+            f"action_l4={action_force_components['l4']:.6f} "
+            f"action_l6={action_force_components['l6']:.6f} "
+            f"action_l8={action_force_components['l8']:.6f} "
+            f"jac_l2={jac_force_components['l2']:.6f} "
+            f"jac_l4={jac_force_components['l4']:.6f} "
+            f"jac_l6={jac_force_components['l6']:.6f} "
+            f"jac_l8={jac_force_components['l8']:.6f}"
+        )
 
-    def train_step(self, links_ori: torch.Tensor) -> float:
+    def train_step(self, links_ori: torch.Tensor) -> tuple[float, float]:
         links_ori = links_ori.to(self.device)
         loss = self.loss_fn(links_ori)
         for optimizer in self.optimizers:
             optimizer.zero_grad()
         self.backward(loss)
+        grad_norm = self._gradient_norm()
         self._clip_gradients()
         for optimizer in self.optimizers:
             optimizer.step()
-        return float(loss.detach().cpu())
+        return float(loss.detach().cpu()), grad_norm
 
     def evaluate_step(self, links_ori: torch.Tensor) -> float:
         links_ori = links_ori.to(self.device)
@@ -749,11 +897,14 @@ class FieldTransformation:
 
         for epoch in tqdm(range(n_epochs), desc="Training epochs"):
             self._set_models_mode(True)
-            epoch_losses = [
-                (self.train_step(batch), len(batch))
-                for batch in tqdm(train_loader, desc=f"Epoch {epoch + 1}/{n_epochs}")
-            ]
+            epoch_losses = []
+            grad_norms = []
+            for batch in tqdm(train_loader, desc=f"Epoch {epoch + 1}/{n_epochs}"):
+                batch_loss, grad_norm = self.train_step(batch)
+                epoch_losses.append((batch_loss, len(batch)))
+                grad_norms.append(grad_norm)
             train_loss = self._global_weighted_epoch_loss(epoch_losses)
+            mean_grad_norm = self._global_mean(grad_norms)
             train_losses.append(train_loss)
 
             self._set_models_mode(False)
@@ -780,7 +931,7 @@ class FieldTransformation:
                 f"Train Loss: {train_loss:.6f} - Test Loss: {test_loss:.6f} - "
                 f"LR: {self._format_learning_rates()}"
             )
-            self._maybe_log_inverse_diagnostics(test_data, batch_size, epoch + 1, n_epochs)
+            self._maybe_log_training_diagnostics(test_data, batch_size, epoch + 1, n_epochs, mean_grad_norm)
             if (
                 early_stop_patience > 0
                 and best_epoch >= 0
@@ -812,6 +963,17 @@ class FieldTransformation:
         local_loss_sum = sum(loss * count for loss, count in losses_and_counts)
         local_count = sum(count for _, count in losses_and_counts)
         totals = torch.tensor([local_loss_sum, local_count], device=self.device, dtype=torch.float64)
+        if self.fabric is not None:
+            totals = self.fabric.all_reduce(totals, reduce_op="sum")
+        total_count = float(totals[1].item())
+        if total_count == 0:
+            return float("nan")
+        return float((totals[0] / totals[1]).item())
+
+    def _global_mean(self, values: list[float]) -> float:
+        local_sum = sum(values)
+        local_count = len(values)
+        totals = torch.tensor([local_sum, local_count], device=self.device, dtype=torch.float64)
         if self.fabric is not None:
             totals = self.fabric.all_reduce(totals, reduce_op="sum")
         total_count = float(totals[1].item())

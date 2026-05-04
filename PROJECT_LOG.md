@@ -8,6 +8,7 @@ This is an append-only development history for NTHMC.
 - Extended `2du1` and `2du2` `model_training/train.py` with optional `--max_grad_norm`, `--plateau_factor`, and `--plateau_patience`, and log the merged `hyperparams` after construction.
 - Added optional `return_diagnostics` on U(1)/U(2) `inverse`, per-epoch `inverse_diag` lines (rank 0) after each training epoch using a small fixed test slice, and 1-based epoch indices on U(1)/U(2) training loss plots.
 - Made U(2) training loss DDP-global before logging/checkpointing/scheduling, added per-epoch LR logging, and added U(2)-only validation early stopping with CLI override.
+- Added U(2)-only per-epoch training diagnostics for pre-clip gradient norm, model parameter norm, transform update size, coefficient saturation, Jacobian logdet statistics, and action/Jacobian/total force-loss components.
 
 ## 2026-04-30
 
