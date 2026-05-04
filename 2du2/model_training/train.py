@@ -48,6 +48,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--plateau_patience", type=int, default=None)
     parser.add_argument("--early_stop_patience", type=int, default=None)
     parser.add_argument("--delta_reg", type=float, default=None)
+    parser.add_argument("--jac_force_reg", type=float, default=None)
+    parser.add_argument("--logdet_reg", type=float, default=None)
     parser.add_argument("--loss_weights", type=float, nargs=4, default=None, metavar=("W2", "W4", "W6", "W8"))
     parser.add_argument("--accelerator", type=str, default="cuda")
     parser.add_argument("--strategy", type=str, default="ddp")
@@ -99,6 +101,10 @@ def main() -> None:
         hyperparams["early_stop_patience"] = args.early_stop_patience
     if args.delta_reg is not None:
         hyperparams["delta_reg"] = args.delta_reg
+    if args.jac_force_reg is not None:
+        hyperparams["jac_force_reg"] = args.jac_force_reg
+    if args.logdet_reg is not None:
+        hyperparams["logdet_reg"] = args.logdet_reg
     if args.loss_weights is not None:
         hyperparams["loss_weights"] = tuple(args.loss_weights)
 

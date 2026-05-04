@@ -83,6 +83,8 @@ class FieldTransformation:
             "max_grad_norm": 10.0,
             "early_stop_patience": 3,
             "delta_reg": 10.0,
+            "jac_force_reg": 0.0,
+            "logdet_reg": 0.0,
             "loss_weights": (1.0, 1.0, 1.0, 1.0),
         }
         if hyperparams:
@@ -694,8 +696,8 @@ class FieldTransformation:
         links_ori = self.forward_compiled(varied_links)
         action = self.compute_action_compiled(links_ori, beta)
         jac_logdet = self.compute_jac_logdet_compiled(varied_links)
-        action_force = torch.autograd.grad(action.sum(), algebra, retain_graph=True)[0]
-        jac_force = torch.autograd.grad(jac_logdet.sum(), algebra)[0]
+        action_force = torch.autograd.grad(action.sum(), algebra, create_graph=True, retain_graph=True)[0]
+        jac_force = torch.autograd.grad(jac_logdet.sum(), algebra, create_graph=True)[0]
         total_force = action_force - jac_force
         return total_force, action_force, jac_force, jac_logdet
 
@@ -703,16 +705,15 @@ class FieldTransformation:
         if self.train_beta is None:
             raise RuntimeError("train_beta is not set")
         links_new = self.inverse(links_ori)
-        force_new = self.compute_force(links_new, self.train_beta, transformed=True)
+        force_new, _, jac_force, jac_logdet = self.compute_transformed_force_terms(links_new, self.train_beta)
         volume = self.lattice_size * self.lattice_size
-        force_flat = force_new.reshape(force_new.shape[0], -1)
-        force_l2 = torch.linalg.vector_norm(force_flat, ord=2, dim=1) / (volume**0.5)
-        force_l4 = torch.linalg.vector_norm(force_flat, ord=4, dim=1) / (volume**0.25)
-        force_l6 = torch.linalg.vector_norm(force_flat, ord=6, dim=1) / (volume ** (1 / 6))
-        force_l8 = torch.linalg.vector_norm(force_flat, ord=8, dim=1) / (volume ** (1 / 8))
-        w2, w4, w6, w8 = self._loss_weights()
-        loss_per_config = w2 * force_l2 + w4 * force_l4 + w6 * force_l6 + w8 * force_l8
-        loss = loss_per_config.mean()
+        loss = self._weighted_force_loss_tensor(force_new)
+        jac_force_reg = float(self.hyperparams.get("jac_force_reg", 0.0))
+        if jac_force_reg > 0:
+            loss = loss + jac_force_reg * self._weighted_force_loss_tensor(jac_force)
+        logdet_reg = float(self.hyperparams.get("logdet_reg", 0.0))
+        if logdet_reg > 0:
+            loss = loss + logdet_reg * torch.mean((jac_logdet / volume) ** 2)
         delta_reg = float(self.hyperparams.get("delta_reg", 0.0))
         if delta_reg > 0:
             loss = loss + delta_reg * self.delta_regularization_loss(links_new)
@@ -736,6 +737,16 @@ class FieldTransformation:
             + w6 * components["l6"]
             + w8 * components["l8"]
         )
+
+    def _weighted_force_loss_tensor(self, force: torch.Tensor) -> torch.Tensor:
+        volume = self.lattice_size * self.lattice_size
+        force_flat = force.reshape(force.shape[0], -1)
+        force_l2 = torch.linalg.vector_norm(force_flat, ord=2, dim=1) / (volume**0.5)
+        force_l4 = torch.linalg.vector_norm(force_flat, ord=4, dim=1) / (volume**0.25)
+        force_l6 = torch.linalg.vector_norm(force_flat, ord=6, dim=1) / (volume ** (1 / 6))
+        force_l8 = torch.linalg.vector_norm(force_flat, ord=8, dim=1) / (volume ** (1 / 8))
+        w2, w4, w6, w8 = self._loss_weights()
+        return (w2 * force_l2 + w4 * force_l4 + w6 * force_l6 + w8 * force_l8).mean()
 
     def delta_regularization_loss(self, links: torch.Tensor) -> torch.Tensor:
         volume = self.lattice_size * self.lattice_size
@@ -857,8 +868,15 @@ class FieldTransformation:
             force_components = self._force_loss_components(force)
             action_force_components = self._force_loss_components(action_force)
             jac_force_components = self._force_loss_components(jac_force)
+            volume = self.lattice_size * self.lattice_size
+            logdet_reg_loss = float(torch.mean((jac_logdet / volume) ** 2).detach().cpu())
         force_weighted_loss = self._weighted_force_loss(force_components)
+        jac_force_weighted_loss = self._weighted_force_loss(jac_force_components)
         delta_reg_penalty = delta_reg_weight * delta_reg_loss
+        jac_force_reg = float(self.hyperparams.get("jac_force_reg", 0.0))
+        jac_force_reg_penalty = jac_force_reg * jac_force_weighted_loss
+        logdet_reg = float(self.hyperparams.get("logdet_reg", 0.0))
+        logdet_reg_penalty = logdet_reg * logdet_reg_loss
         jac_logdet = jac_logdet.detach()
         jac_std = jac_logdet.std(unbiased=False).item()
         self.print(
@@ -876,6 +894,11 @@ class FieldTransformation:
             f"delta_reg_loss={delta_reg_loss:.2e} "
             f"delta_reg_weight={delta_reg_weight:.2e} "
             f"delta_reg_penalty={delta_reg_penalty:.2e} "
+            f"jac_force_reg={jac_force_reg:.2e} "
+            f"jac_force_reg_penalty={jac_force_reg_penalty:.2e} "
+            f"logdet_reg_loss={logdet_reg_loss:.2e} "
+            f"logdet_reg={logdet_reg:.2e} "
+            f"logdet_reg_penalty={logdet_reg_penalty:.2e} "
             f"loss_weights={self._loss_weights()} "
             f"force_weighted_loss={force_weighted_loss:.6f} "
             f"k0_abs_mean={coefficient_diag['k0_abs_mean']:.2e} "
