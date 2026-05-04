@@ -9,6 +9,7 @@ This is an append-only development history for NTHMC.
 - Added optional `return_diagnostics` on U(1)/U(2) `inverse`, per-epoch `inverse_diag` lines (rank 0) after each training epoch using a small fixed test slice, and 1-based epoch indices on U(1)/U(2) training loss plots.
 - Made U(2) training loss DDP-global before logging/checkpointing/scheduling, added per-epoch LR logging, and added U(2)-only validation early stopping with CLI override.
 - Added U(2)-only per-epoch training diagnostics for pre-clip gradient norm, model parameter norm, transform update size, coefficient saturation, Jacobian logdet statistics, and action/Jacobian/total force-loss components.
+- Added a U(2)-only delta-size regularization term to the training loss to discourage runaway transformation/Jacobian growth while preserving the L2/L4/L6/L8 force objective.
 
 ## 2026-04-30
 

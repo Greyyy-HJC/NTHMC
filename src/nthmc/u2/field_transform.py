@@ -82,6 +82,7 @@ class FieldTransformation:
             "patience": 1,
             "max_grad_norm": 10.0,
             "early_stop_patience": 3,
+            "delta_reg": 10.0,
         }
         if hyperparams:
             self.hyperparams.update(hyperparams)
@@ -710,7 +711,24 @@ class FieldTransformation:
             + torch.linalg.vector_norm(force_flat, ord=6, dim=1) / (volume ** (1 / 6))
             + torch.linalg.vector_norm(force_flat, ord=8, dim=1) / (volume ** (1 / 8))
         )
-        return loss_per_config.mean()
+        loss = loss_per_config.mean()
+        delta_reg = float(self.hyperparams.get("delta_reg", 0.0))
+        if delta_reg > 0:
+            loss = loss + delta_reg * self.delta_regularization_loss(links_new)
+        return loss
+
+    def delta_regularization_loss(self, links: torch.Tensor) -> torch.Tensor:
+        volume = self.lattice_size * self.lattice_size
+        links_curr = u2_normalize(links)
+        penalties = []
+        for index in range(self.n_subsets):
+            delta = self.compute_delta(links_curr, index)
+            delta_flat = delta.reshape(delta.shape[0], -1)
+            penalties.append(torch.sum(delta_flat**2, dim=1) / volume)
+            links_curr = u2_mul(u2_exp(delta), links_curr)
+        if not penalties:
+            return torch.zeros((), device=self.device, dtype=links.dtype)
+        return torch.stack(penalties, dim=1).mean()
 
     def _force_loss_components(self, force: torch.Tensor) -> dict[str, float]:
         volume = self.lattice_size * self.lattice_size
@@ -809,6 +827,7 @@ class FieldTransformation:
             delta_mean, delta_max = self._delta_diagnostics(inv)
             coefficient_diag = self._coefficient_diagnostics(inv)
             param_norm, param_max = self._parameter_diagnostics()
+            delta_reg_loss = float(self.delta_regularization_loss(inv).cpu())
         with torch.enable_grad():
             force, action_force, jac_force, jac_logdet = self.compute_transformed_force_terms(
                 inv.detach(),
@@ -831,6 +850,8 @@ class FieldTransformation:
             f"grad_norm_pre_clip={grad_norm:.2e} "
             f"param_norm={param_norm:.2e} param_max_abs={param_max:.2e} "
             f"delta_norm_mean={delta_mean:.2e} delta_norm_max={delta_max:.2e} "
+            f"delta_reg_loss={delta_reg_loss:.2e} "
+            f"delta_reg_weight={float(self.hyperparams.get('delta_reg', 0.0)):.2e} "
             f"k0_abs_mean={coefficient_diag['k0_abs_mean']:.2e} "
             f"k0_abs_max={coefficient_diag['k0_abs_max']:.2e} "
             f"k0_sat_frac={coefficient_diag['k0_sat_frac']:.3f} "
