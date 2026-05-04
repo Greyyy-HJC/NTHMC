@@ -46,8 +46,8 @@ class LocalNet(nn.Module):
         x = torch.cat([plaq_features, rect_features], dim=1)
         x = self.activation(self.conv_input(x))
         x = self.conv_output(x)
-        plaq_coeffs = torch.tanh(x[:, : self.config.plaq_output_channels]) / 5
-        rect_coeffs = torch.tanh(x[:, self.config.plaq_output_channels :]) / 40
+        plaq_coeffs = torch.tanh(x[:, : self.config.plaq_output_channels]) / 6 # 5
+        rect_coeffs = torch.tanh(x[:, self.config.plaq_output_channels :]) / 45 # 40
         return plaq_coeffs, rect_coeffs
 
 

@@ -318,8 +318,17 @@ class FieldTransformation:
     ) -> torch.Tensor:
         return self.inverse(theta, max_iter=max_iter, tol=tol)
 
-    def inverse(self, theta: torch.Tensor, *, max_iter: int = 200, tol: float = 1e-6) -> torch.Tensor:
+    def inverse(
+        self,
+        theta: torch.Tensor,
+        *,
+        max_iter: int = 200,
+        tol: float = 1e-6,
+        return_diagnostics: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, dict[str, float | int]]:
         theta_curr = theta.clone()
+        subset_final_diffs: list[float] = []
+        n_not_converged = 0
         for index in reversed(range(self.n_subsets)):
             theta_iter = theta_curr.clone()
             diff = torch.tensor(float("inf"), device=self.device)
@@ -330,9 +339,21 @@ class FieldTransformation:
                 theta_iter = theta_next
                 if diff < tol:
                     break
+            final_diff = float(diff.detach().cpu())
+            subset_final_diffs.append(final_diff)
             if diff >= tol:
+                n_not_converged += 1
                 self.print(f"Warning: inverse iteration for subset {index} did not converge, diff={diff:.2e}")
             theta_curr = theta_iter
+        if return_diagnostics:
+            diag: dict[str, float | int] = {
+                "max_final_diff": max(subset_final_diffs) if subset_final_diffs else 0.0,
+                "mean_final_diff": float(sum(subset_final_diffs) / len(subset_final_diffs))
+                if subset_final_diffs
+                else 0.0,
+                "n_not_converged": n_not_converged,
+            }
+            return theta_curr, diag
         return theta_curr
 
     def inverse_field_transformation(self, theta: torch.Tensor) -> torch.Tensor:
@@ -426,6 +447,31 @@ class FieldTransformation:
         )
         return loss_per_config.mean()
 
+    def _maybe_log_inverse_diagnostics(
+        self,
+        test_data: torch.Tensor,
+        batch_size: int,
+        epoch_display: int,
+        n_epochs: int,
+    ) -> None:
+        if self.fabric is not None and self.fabric.global_rank != 0:
+            return
+        n = min(8, int(test_data.shape[0]), int(batch_size))
+        if n <= 0:
+            return
+        probe = test_data[:n].to(self.device)
+        with torch.no_grad():
+            inv, diag = self.inverse(probe, return_diagnostics=True)
+            recon = self.forward(inv)
+            rt_err = (recon - probe).abs().mean().item()
+        self.print(
+            f"Epoch {epoch_display}/{n_epochs} inverse_diag: "
+            f"max_final_diff={diag['max_final_diff']:.2e} "
+            f"mean_final_diff={diag['mean_final_diff']:.2e} "
+            f"n_subsets_not_converged={diag['n_not_converged']} "
+            f"round_trip_mean_abs_err={rt_err:.2e}"
+        )
+
     def train_step(self, theta_ori: torch.Tensor) -> float:
         theta_ori = theta_ori.to(self.device)
         loss = self.loss_fn(theta_ori)
@@ -480,6 +526,7 @@ class FieldTransformation:
                 f"Epoch {epoch + 1}/{n_epochs} - "
                 f"Train Loss: {train_loss:.6f} - Test Loss: {test_loss:.6f}"
             )
+            self._maybe_log_inverse_diagnostics(test_data, batch_size, epoch + 1, n_epochs)
             if test_loss < best_loss:
                 self.save_best_model(epoch, test_loss)
                 best_loss = test_loss
@@ -536,9 +583,10 @@ class FieldTransformation:
         self.dump_dir.mkdir(parents=True, exist_ok=True)
         beta_tag = format_beta(self.train_beta)
 
+        epochs_axis = np.arange(1, len(train_losses) + 1)
         plt.figure(figsize=(10, 5))
-        plt.plot(train_losses, label="Train")
-        plt.plot(test_losses, label="Test")
+        plt.plot(epochs_axis, train_losses, label="Train")
+        plt.plot(epochs_axis, test_losses, label="Test")
         plt.xlabel("Epoch")
         plt.ylabel("Loss")
         plt.legend()
