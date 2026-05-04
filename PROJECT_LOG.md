@@ -2,6 +2,13 @@
 
 This is an append-only development history for NTHMC.
 
+## 2026-05-04
+
+- Added U(2)-only configurable force-loss weights for the L2/L4/L6/L8 transformed-force objective, preserving the default equal-weight objective.
+- Extended `2du2/model_training/train.py` with `--loss_weights` and `--delta_reg` overrides for beta=8 high-order force-tail experiments.
+- Prepared the `2du2` beta=8 training entry point to accept tail-weighted and L6/L8-only ablation runs without changing the default source behavior.
+- Expanded U(2) training diagnostics to report resolved loss weights, weighted force loss, and the realized delta-regularization penalty alongside the raw force components.
+
 ## 2026-05-03
 
 - Tightened U(2) default field-transformation training (lower base LR, light weight decay, `ReduceLROnPlateau` patience 1) and added global gradient clipping after the shared backward in U(1)/U(2) `FieldTransformation.train_step`.

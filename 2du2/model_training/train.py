@@ -47,6 +47,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--plateau_factor", type=float, default=None)
     parser.add_argument("--plateau_patience", type=int, default=None)
     parser.add_argument("--early_stop_patience", type=int, default=None)
+    parser.add_argument("--delta_reg", type=float, default=None)
+    parser.add_argument("--loss_weights", type=float, nargs=4, default=None, metavar=("W2", "W4", "W6", "W8"))
     parser.add_argument("--accelerator", type=str, default="cuda")
     parser.add_argument("--strategy", type=str, default="ddp")
     parser.add_argument("--devices", default="auto")
@@ -95,6 +97,10 @@ def main() -> None:
         hyperparams["patience"] = float(args.plateau_patience)
     if args.early_stop_patience is not None:
         hyperparams["early_stop_patience"] = args.early_stop_patience
+    if args.delta_reg is not None:
+        hyperparams["delta_reg"] = args.delta_reg
+    if args.loss_weights is not None:
+        hyperparams["loss_weights"] = tuple(args.loss_weights)
 
     fabric.print("=" * 60)
     fabric.print(">>> U(2) base field-transformation training")

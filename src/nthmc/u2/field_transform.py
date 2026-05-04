@@ -83,6 +83,7 @@ class FieldTransformation:
             "max_grad_norm": 10.0,
             "early_stop_patience": 3,
             "delta_reg": 10.0,
+            "loss_weights": (1.0, 1.0, 1.0, 1.0),
         }
         if hyperparams:
             self.hyperparams.update(hyperparams)
@@ -705,17 +706,36 @@ class FieldTransformation:
         force_new = self.compute_force(links_new, self.train_beta, transformed=True)
         volume = self.lattice_size * self.lattice_size
         force_flat = force_new.reshape(force_new.shape[0], -1)
-        loss_per_config = (
-            torch.linalg.vector_norm(force_flat, ord=2, dim=1) / (volume**0.5)
-            + torch.linalg.vector_norm(force_flat, ord=4, dim=1) / (volume**0.25)
-            + torch.linalg.vector_norm(force_flat, ord=6, dim=1) / (volume ** (1 / 6))
-            + torch.linalg.vector_norm(force_flat, ord=8, dim=1) / (volume ** (1 / 8))
-        )
+        force_l2 = torch.linalg.vector_norm(force_flat, ord=2, dim=1) / (volume**0.5)
+        force_l4 = torch.linalg.vector_norm(force_flat, ord=4, dim=1) / (volume**0.25)
+        force_l6 = torch.linalg.vector_norm(force_flat, ord=6, dim=1) / (volume ** (1 / 6))
+        force_l8 = torch.linalg.vector_norm(force_flat, ord=8, dim=1) / (volume ** (1 / 8))
+        w2, w4, w6, w8 = self._loss_weights()
+        loss_per_config = w2 * force_l2 + w4 * force_l4 + w6 * force_l6 + w8 * force_l8
         loss = loss_per_config.mean()
         delta_reg = float(self.hyperparams.get("delta_reg", 0.0))
         if delta_reg > 0:
             loss = loss + delta_reg * self.delta_regularization_loss(links_new)
         return loss
+
+    def _loss_weights(self) -> tuple[float, float, float, float]:
+        weights = self.hyperparams.get("loss_weights", (1.0, 1.0, 1.0, 1.0))
+        try:
+            values = tuple(float(weight) for weight in weights)
+        except TypeError as exc:
+            raise ValueError("loss_weights must contain exactly four numeric values") from exc
+        if len(values) != 4:
+            raise ValueError("loss_weights must contain exactly four numeric values")
+        return values
+
+    def _weighted_force_loss(self, components: dict[str, float]) -> float:
+        w2, w4, w6, w8 = self._loss_weights()
+        return (
+            w2 * components["l2"]
+            + w4 * components["l4"]
+            + w6 * components["l6"]
+            + w8 * components["l8"]
+        )
 
     def delta_regularization_loss(self, links: torch.Tensor) -> torch.Tensor:
         volume = self.lattice_size * self.lattice_size
@@ -828,6 +848,7 @@ class FieldTransformation:
             coefficient_diag = self._coefficient_diagnostics(inv)
             param_norm, param_max = self._parameter_diagnostics()
             delta_reg_loss = float(self.delta_regularization_loss(inv).cpu())
+            delta_reg_weight = float(self.hyperparams.get("delta_reg", 0.0))
         with torch.enable_grad():
             force, action_force, jac_force, jac_logdet = self.compute_transformed_force_terms(
                 inv.detach(),
@@ -836,6 +857,8 @@ class FieldTransformation:
             force_components = self._force_loss_components(force)
             action_force_components = self._force_loss_components(action_force)
             jac_force_components = self._force_loss_components(jac_force)
+        force_weighted_loss = self._weighted_force_loss(force_components)
+        delta_reg_penalty = delta_reg_weight * delta_reg_loss
         jac_logdet = jac_logdet.detach()
         jac_std = jac_logdet.std(unbiased=False).item()
         self.print(
@@ -851,7 +874,10 @@ class FieldTransformation:
             f"param_norm={param_norm:.2e} param_max_abs={param_max:.2e} "
             f"delta_norm_mean={delta_mean:.2e} delta_norm_max={delta_max:.2e} "
             f"delta_reg_loss={delta_reg_loss:.2e} "
-            f"delta_reg_weight={float(self.hyperparams.get('delta_reg', 0.0)):.2e} "
+            f"delta_reg_weight={delta_reg_weight:.2e} "
+            f"delta_reg_penalty={delta_reg_penalty:.2e} "
+            f"loss_weights={self._loss_weights()} "
+            f"force_weighted_loss={force_weighted_loss:.6f} "
             f"k0_abs_mean={coefficient_diag['k0_abs_mean']:.2e} "
             f"k0_abs_max={coefficient_diag['k0_abs_max']:.2e} "
             f"k0_sat_frac={coefficient_diag['k0_sat_frac']:.3f} "
