@@ -146,7 +146,7 @@ def test_loop_delta_applies_orientation_only_to_sin_like_terms() -> None:
     assert torch.allclose(cos_delta_flipped, cos_delta, atol=1e-5)
 
 
-def test_u2_base_model_returns_phase_only_full_layout_coefficients() -> None:
+def test_u2_base_model_returns_sin_phase_only_full_layout_coefficients() -> None:
     model = LocalNet()
     plaq_features = torch.randn(2, 2, 4, 4)
     rect_features = torch.randn(2, 4, 4, 4)
@@ -158,8 +158,10 @@ def test_u2_base_model_returns_phase_only_full_layout_coefficients() -> None:
     assert plaq_coeffs.shape == (2, 16, 4, 4)
     assert rect_coeffs.shape == (2, 32, 4, 4)
     assert torch.allclose(plaq_by_loop[:, :, 1], torch.zeros_like(plaq_by_loop[:, :, 1]))
+    assert torch.allclose(plaq_by_loop[:, :, 2], torch.zeros_like(plaq_by_loop[:, :, 2]))
     assert torch.allclose(plaq_by_loop[:, :, 3], torch.zeros_like(plaq_by_loop[:, :, 3]))
     assert torch.allclose(rect_by_loop[:, :, 1], torch.zeros_like(rect_by_loop[:, :, 1]))
+    assert torch.allclose(rect_by_loop[:, :, 2], torch.zeros_like(rect_by_loop[:, :, 2]))
     assert torch.allclose(rect_by_loop[:, :, 3], torch.zeros_like(rect_by_loop[:, :, 3]))
 
 

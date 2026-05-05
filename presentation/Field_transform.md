@@ -153,20 +153,22 @@ Therefore:
 - rectangle CNN input has 4 channels, from 2 rectangle orientations times
   2 scalar channels
 
-The CNN outputs only phase coefficients:
+The CNN outputs only sin-like phase coefficients, matching the current U(1)
+`base` model:
 
-- plaquette: 4 loops times 2 phase slots = 8 nonzero channels
-- rectangle: 8 loops times 2 phase slots = 16 nonzero channels
+- plaquette: 4 loops times 1 sin-like phase slot = 4 nonzero channels
+- rectangle: 8 loops times 1 sin-like phase slot = 8 nonzero channels
 
 These are expanded back to the full field-transform layout:
 
 - plaquette full layout: 16 channels
 - rectangle full layout: 32 channels
 
-For each loop, coefficient slots 0 and 2 are phase slots, while slots 1 and
-3 are traceless color slots. The current base model sets slots 1 and 3 to
-zero. Thus the total full-layout output has 24 nonzero phase channels and
-24 identically zero traceless channels.
+For each loop, coefficient slot 0 is the sin-like phase slot and coefficient
+slot 2 is the cos-like phase slot, while slots 1 and 3 are traceless color
+slots. The current base model sets slots 1, 2, and 3 to zero. Thus the total
+full-layout output has 12 nonzero sin-like phase channels and 36 identically
+zero channels.
 
 This scalar-only update is gauge covariant because the update is proportional
 to the central generator $iI$. The scalar coefficient is gauge invariant, and
