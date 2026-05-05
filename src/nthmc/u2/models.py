@@ -10,10 +10,12 @@ import torch.nn as nn
 
 @dataclass(frozen=True)
 class NetConfig:
-    plaq_input_channels: int = 8
-    rect_input_channels: int = 16
-    plaq_output_channels: int = 16
-    rect_output_channels: int = 32
+    plaq_input_channels: int = 2
+    rect_input_channels: int = 4
+    plaq_output_channels: int = 8
+    rect_output_channels: int = 16
+    full_plaq_output_channels: int = 16
+    full_rect_output_channels: int = 32
     hidden_channels: int = 12
     kernel_size: tuple[int, int] = (3, 3)
 
@@ -46,8 +48,35 @@ class LocalNet(nn.Module):
         x = torch.cat([plaq_features, rect_features], dim=1)
         x = self.activation(self.conv_input(x))
         x = self.conv_output(x)
-        plaq_coeffs = torch.tanh(x[:, : self.config.plaq_output_channels]) / 6 # 5
-        rect_coeffs = torch.tanh(x[:, self.config.plaq_output_channels :]) / 45 # 40
+        plaq_phase_coeffs = torch.tanh(x[:, : self.config.plaq_output_channels]) / 5
+        rect_phase_coeffs = torch.tanh(x[:, self.config.plaq_output_channels :]) / 40
+
+        plaq_coeffs = torch.zeros(
+            x.shape[0],
+            self.config.full_plaq_output_channels,
+            *x.shape[2:],
+            device=x.device,
+            dtype=x.dtype,
+        )
+        rect_coeffs = torch.zeros(
+            x.shape[0],
+            self.config.full_rect_output_channels,
+            *x.shape[2:],
+            device=x.device,
+            dtype=x.dtype,
+        )
+        plaq_coeffs.reshape(x.shape[0], 4, 4, *x.shape[2:])[:, :, [0, 2]] = plaq_phase_coeffs.reshape(
+            x.shape[0],
+            4,
+            2,
+            *x.shape[2:],
+        )
+        rect_coeffs.reshape(x.shape[0], 8, 4, *x.shape[2:])[:, :, [0, 2]] = rect_phase_coeffs.reshape(
+            x.shape[0],
+            8,
+            2,
+            *x.shape[2:],
+        )
         return plaq_coeffs, rect_coeffs
 
 

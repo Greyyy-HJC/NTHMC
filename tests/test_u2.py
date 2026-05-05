@@ -1,9 +1,11 @@
 import torch
 
 from nthmc.u2.field_transform import FieldTransformation
+from nthmc.u2.models import LocalNet
 from nthmc.u2.u2_fthmc import HMCU2FT
 from nthmc.u2.u2_hmc import HMCU2
 from nthmc.u2.u2_observables import (
+    action_from_field_batch,
     identity_field,
     loop_sin_cos_features,
     matrix_to_u2,
@@ -24,6 +26,14 @@ from nthmc.u1.u1_observables import (
     plaq_from_field_batch as u1_plaq_from_field_batch,
     rect_from_field_batch as u1_rect_from_field_batch,
 )
+
+
+def gauge_transform_split(links: torch.Tensor, omega: torch.Tensor) -> torch.Tensor:
+    """Apply a local U(2) gauge transform to split batch links."""
+    transformed = links.clone()
+    transformed[:, 0] = u2_mul(u2_mul(torch.roll(omega, shifts=-1, dims=1), links[:, 0]), u2_conj(omega))
+    transformed[:, 1] = u2_mul(u2_mul(torch.roll(omega, shifts=-1, dims=2), links[:, 1]), u2_conj(omega))
+    return transformed
 
 
 def test_u2_exp_returns_unitary_matrices() -> None:
@@ -136,6 +146,23 @@ def test_loop_delta_applies_orientation_only_to_sin_like_terms() -> None:
     assert torch.allclose(cos_delta_flipped, cos_delta, atol=1e-5)
 
 
+def test_u2_base_model_returns_phase_only_full_layout_coefficients() -> None:
+    model = LocalNet()
+    plaq_features = torch.randn(2, 2, 4, 4)
+    rect_features = torch.randn(2, 4, 4, 4)
+
+    plaq_coeffs, rect_coeffs = model(plaq_features, rect_features)
+    plaq_by_loop = plaq_coeffs.reshape(2, 4, 4, 4, 4)
+    rect_by_loop = rect_coeffs.reshape(2, 8, 4, 4, 4)
+
+    assert plaq_coeffs.shape == (2, 16, 4, 4)
+    assert rect_coeffs.shape == (2, 32, 4, 4)
+    assert torch.allclose(plaq_by_loop[:, :, 1], torch.zeros_like(plaq_by_loop[:, :, 1]))
+    assert torch.allclose(plaq_by_loop[:, :, 3], torch.zeros_like(plaq_by_loop[:, :, 3]))
+    assert torch.allclose(rect_by_loop[:, :, 1], torch.zeros_like(rect_by_loop[:, :, 1]))
+    assert torch.allclose(rect_by_loop[:, :, 3], torch.zeros_like(rect_by_loop[:, :, 3]))
+
+
 def test_identity_field_has_unit_plaquette_and_zero_action() -> None:
     hmc = HMCU2(lattice_size=4, beta=3.0, n_thermalization_steps=1, n_steps=1, step_size=0.1)
     links = identity_field(4)
@@ -233,6 +260,108 @@ def test_field_transform_full_subset_float32_jacobian_check_tolerance() -> None:
     rtol, atol = transform._jacobian_check_tolerances(links)
 
     assert torch.allclose(manual, autograd, rtol=rtol, atol=atol)
+
+
+def test_scalar_only_field_transform_is_gauge_covariant() -> None:
+    set_seed(1234)
+    transform = FieldTransformation(4, n_subsets=8, identity_init=True, hyperparams={"init_std": 0.01})
+    links = u2_exp(0.2 * torch.randn(1, 2, 4, 4, 4))
+    omega = u2_exp(0.5 * torch.randn(1, 4, 4, 4))
+
+    transformed_gauge_links = transform.forward(gauge_transform_split(links, omega))
+    gauge_transformed_output = gauge_transform_split(transform.forward(links), omega)
+
+    assert torch.allclose(
+        u2_to_matrix(transformed_gauge_links),
+        u2_to_matrix(gauge_transformed_output),
+        atol=1e-5,
+        rtol=1e-5,
+    )
+
+
+def test_scalar_only_field_transform_logdet_is_gauge_invariant() -> None:
+    set_seed(1234)
+    transform = FieldTransformation(4, n_subsets=8, identity_init=True, hyperparams={"init_std": 0.01})
+    links = u2_exp(0.2 * torch.randn(1, 2, 4, 4, 4))
+    omega = u2_exp(0.5 * torch.randn(1, 4, 4, 4))
+
+    logdet = transform.compute_jac_logdet(links)
+    gauge_logdet = transform.compute_jac_logdet(gauge_transform_split(links, omega))
+
+    assert torch.allclose(gauge_logdet, logdet, atol=1e-5, rtol=1e-5)
+
+
+def test_u2_force_matches_finite_difference_directional_derivative() -> None:
+    set_seed(1234)
+    torch.set_default_dtype(torch.float64)
+    try:
+        beta = 2.0
+        lattice_size = 2
+        transform = FieldTransformation(lattice_size, n_subsets=1, identity_init=False)
+        links = u2_exp(0.2 * torch.randn(1, 2, lattice_size, lattice_size, 4))
+        direction = torch.randn_like(links[..., :4])
+        direction = direction / torch.linalg.vector_norm(direction)
+        eps = 1e-6
+
+        force = transform.compute_force(links, beta=beta, transformed=False)
+        links_plus = u2_mul(u2_exp(eps * direction), links)
+        links_minus = u2_mul(u2_exp(-eps * direction), links)
+        action_plus = action_from_field_batch(links_plus, beta)
+        action_minus = action_from_field_batch(links_minus, beta)
+        finite_difference = ((action_plus - action_minus) / (2 * eps)).squeeze(0)
+        directional_derivative = torch.sum(force * direction)
+
+        assert torch.allclose(directional_derivative, finite_difference, rtol=1e-5, atol=1e-7)
+    finally:
+        torch.set_default_dtype(torch.float32)
+
+
+def test_u2_transformed_force_matches_finite_difference_directional_derivative() -> None:
+    set_seed(1234)
+    torch.set_default_dtype(torch.float64)
+    try:
+        beta = 2.0
+        lattice_size = 2
+        transform = FieldTransformation(
+            lattice_size,
+            n_subsets=1,
+            identity_init=True,
+            hyperparams={"init_std": 0.0001},
+        )
+        links = u2_exp(0.2 * torch.randn(1, 2, lattice_size, lattice_size, 4))
+        direction = torch.randn_like(links[..., :4])
+        direction = direction / torch.linalg.vector_norm(direction)
+        eps = 1e-6
+
+        force = transform.compute_force(links, beta=beta, transformed=True)
+
+        def transformed_potential(varied_links: torch.Tensor) -> torch.Tensor:
+            transformed = transform.forward(varied_links)
+            return action_from_field_batch(transformed, beta) - transform.compute_jac_logdet(varied_links)
+
+        links_plus = u2_mul(u2_exp(eps * direction), links)
+        links_minus = u2_mul(u2_exp(-eps * direction), links)
+        finite_difference = (
+            (transformed_potential(links_plus) - transformed_potential(links_minus)) / (2 * eps)
+        ).squeeze(0)
+        directional_derivative = torch.sum(force * direction)
+
+        assert torch.allclose(directional_derivative, finite_difference, rtol=1e-5, atol=1e-7)
+    finally:
+        torch.set_default_dtype(torch.float32)
+
+
+def test_u2_transformed_force_decomposition_matches_compute_force() -> None:
+    set_seed(1234)
+    transform = FieldTransformation(2, n_subsets=1, identity_init=True, hyperparams={"init_std": 0.0001})
+    links = u2_exp(0.2 * torch.randn(1, 2, 2, 2, 4))
+
+    force = transform.compute_force(links, beta=2.0, transformed=True)
+    total_force, action_force, jac_force, jac_logdet = transform.compute_transformed_force_terms(links, beta=2.0)
+
+    assert torch.allclose(total_force, force, rtol=1e-5, atol=1e-6)
+    assert torch.allclose(total_force, action_force - jac_force, rtol=1e-5, atol=1e-6)
+    assert torch.isfinite(jac_logdet).all()
 
 
 def test_hmc_smoke_run_outputs_valid_u2_configs() -> None:

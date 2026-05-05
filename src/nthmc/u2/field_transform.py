@@ -82,9 +82,6 @@ class FieldTransformation:
             "patience": 1,
             "max_grad_norm": 10.0,
             "early_stop_patience": 3,
-            "delta_reg": 10.0,
-            "jac_force_reg": 0.0,
-            "logdet_reg": 0.0,
             "loss_weights": (1.0, 1.0, 1.0, 1.0),
         }
         if hyperparams:
@@ -190,6 +187,20 @@ class FieldTransformation:
     def _masked_loops(self, loops: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         return torch.where(mask, loops, identity_like(loops))
 
+    def _scalar_loop_features(self, loops: torch.Tensor) -> torch.Tensor:
+        """Return compact gauge-invariant scalar loop features."""
+        features = loop_sin_cos_features(loops)
+        return features[..., [0, 4]]
+
+    def _phase_only_coeffs(self, coeffs: torch.Tensor, n_loops: int) -> torch.Tensor:
+        """Keep only phase-update coefficient slots while preserving tensor shape."""
+        batch_size = coeffs.shape[0]
+        coeffs_by_loop = coeffs.reshape(batch_size, n_loops, 4, self.lattice_size, self.lattice_size)
+        phase_mask = torch.zeros(4, device=coeffs.device, dtype=coeffs.dtype)
+        phase_mask[[0, 2]] = 1
+        coeffs_by_loop = coeffs_by_loop * phase_mask.view(1, 1, 4, 1, 1)
+        return coeffs_by_loop.reshape_as(coeffs)
+
     def compute_k0_k1(
         self,
         links: torch.Tensor,
@@ -202,9 +213,9 @@ class FieldTransformation:
         plaq_mask = get_plaq_mask(index, batch_size, self.lattice_size, self.device)
         rect_mask = get_rect_mask(index, batch_size, self.lattice_size, self.device)
 
-        plaq_features = loop_sin_cos_features(self._masked_loops(plaq, plaq_mask)).permute(0, 3, 1, 2)
-        rect_features = loop_sin_cos_features(self._masked_loops(rect, rect_mask))
-        rect_features = rect_features.permute(0, 1, 4, 2, 3).reshape(batch_size, 16, self.lattice_size, self.lattice_size)
+        plaq_features = self._scalar_loop_features(self._masked_loops(plaq, plaq_mask)).permute(0, 3, 1, 2)
+        rect_features = self._scalar_loop_features(self._masked_loops(rect, rect_mask))
+        rect_features = rect_features.permute(0, 1, 4, 2, 3).reshape(batch_size, 4, self.lattice_size, self.lattice_size)
 
         output = self.models[index](plaq_features, rect_features)
         if not isinstance(output, tuple):
@@ -212,7 +223,7 @@ class FieldTransformation:
         k0, k1 = output
         if k0.shape[1] != 16 or k1.shape[1] != 32:
             raise ValueError("field_transform expects 16 plaquette and 32 rectangle coefficient channels")
-        return k0, k1
+        return self._phase_only_coeffs(k0, 4), self._phase_only_coeffs(k1, 8)
 
     def _plaq_loop_stack(self, plaq: torch.Tensor) -> torch.Tensor:
         """Stack the four plaquette loops touching each active link."""
@@ -326,19 +337,19 @@ class FieldTransformation:
 
         rect0_parts = [
             (link0, tangent0),
-            roll_pair(link0, tangent0, -1, 1),
-            roll_pair(link1, tangent1, -2, 1),
-            conj_pair(*roll_pair(link0, tangent0, (-1, -1), (1, 2))),
-            conj_pair(*roll_pair(link0, tangent0, -1, 2)),
             conj_pair(link1, tangent1),
+            conj_pair(*roll_pair(link0, tangent0, -1, 2)),
+            conj_pair(*roll_pair(link0, tangent0, (-1, -1), (1, 2))),
+            roll_pair(link1, tangent1, -2, 1),
+            roll_pair(link0, tangent0, -1, 1),
         ]
         rect1_parts = [
             (link0, tangent0),
-            roll_pair(link1, tangent1, -1, 1),
-            roll_pair(link1, tangent1, (-1, -1), (1, 2)),
-            conj_pair(*roll_pair(link0, tangent0, -2, 2)),
-            conj_pair(*roll_pair(link1, tangent1, -1, 2)),
             conj_pair(link1, tangent1),
+            conj_pair(*roll_pair(link1, tangent1, -1, 2)),
+            conj_pair(*roll_pair(link0, tangent0, -2, 2)),
+            roll_pair(link1, tangent1, (-1, -1), (1, 2)),
+            roll_pair(link1, tangent1, -1, 1),
         ]
 
         rect_values = []
@@ -705,19 +716,8 @@ class FieldTransformation:
         if self.train_beta is None:
             raise RuntimeError("train_beta is not set")
         links_new = self.inverse(links_ori)
-        force_new, _, jac_force, jac_logdet = self.compute_transformed_force_terms(links_new, self.train_beta)
-        volume = self.lattice_size * self.lattice_size
-        loss = self._weighted_force_loss_tensor(force_new)
-        jac_force_reg = float(self.hyperparams.get("jac_force_reg", 0.0))
-        if jac_force_reg > 0:
-            loss = loss + jac_force_reg * self._weighted_force_loss_tensor(jac_force)
-        logdet_reg = float(self.hyperparams.get("logdet_reg", 0.0))
-        if logdet_reg > 0:
-            loss = loss + logdet_reg * torch.mean((jac_logdet / volume) ** 2)
-        delta_reg = float(self.hyperparams.get("delta_reg", 0.0))
-        if delta_reg > 0:
-            loss = loss + delta_reg * self.delta_regularization_loss(links_new)
-        return loss
+        force_new, _, _, _ = self.compute_transformed_force_terms(links_new, self.train_beta)
+        return self._weighted_force_loss_tensor(force_new)
 
     def _loss_weights(self) -> tuple[float, float, float, float]:
         weights = self.hyperparams.get("loss_weights", (1.0, 1.0, 1.0, 1.0))
@@ -747,19 +747,6 @@ class FieldTransformation:
         force_l8 = torch.linalg.vector_norm(force_flat, ord=8, dim=1) / (volume ** (1 / 8))
         w2, w4, w6, w8 = self._loss_weights()
         return (w2 * force_l2 + w4 * force_l4 + w6 * force_l6 + w8 * force_l8).mean()
-
-    def delta_regularization_loss(self, links: torch.Tensor) -> torch.Tensor:
-        volume = self.lattice_size * self.lattice_size
-        links_curr = u2_normalize(links)
-        penalties = []
-        for index in range(self.n_subsets):
-            delta = self.compute_delta(links_curr, index)
-            delta_flat = delta.reshape(delta.shape[0], -1)
-            penalties.append(torch.sum(delta_flat**2, dim=1) / volume)
-            links_curr = u2_mul(u2_exp(delta), links_curr)
-        if not penalties:
-            return torch.zeros((), device=self.device, dtype=links.dtype)
-        return torch.stack(penalties, dim=1).mean()
 
     def _force_loss_components(self, force: torch.Tensor) -> dict[str, float]:
         volume = self.lattice_size * self.lattice_size
@@ -858,8 +845,6 @@ class FieldTransformation:
             delta_mean, delta_max = self._delta_diagnostics(inv)
             coefficient_diag = self._coefficient_diagnostics(inv)
             param_norm, param_max = self._parameter_diagnostics()
-            delta_reg_loss = float(self.delta_regularization_loss(inv).cpu())
-            delta_reg_weight = float(self.hyperparams.get("delta_reg", 0.0))
         with torch.enable_grad():
             force, action_force, jac_force, jac_logdet = self.compute_transformed_force_terms(
                 inv.detach(),
@@ -868,15 +853,7 @@ class FieldTransformation:
             force_components = self._force_loss_components(force)
             action_force_components = self._force_loss_components(action_force)
             jac_force_components = self._force_loss_components(jac_force)
-            volume = self.lattice_size * self.lattice_size
-            logdet_reg_loss = float(torch.mean((jac_logdet / volume) ** 2).detach().cpu())
         force_weighted_loss = self._weighted_force_loss(force_components)
-        jac_force_weighted_loss = self._weighted_force_loss(jac_force_components)
-        delta_reg_penalty = delta_reg_weight * delta_reg_loss
-        jac_force_reg = float(self.hyperparams.get("jac_force_reg", 0.0))
-        jac_force_reg_penalty = jac_force_reg * jac_force_weighted_loss
-        logdet_reg = float(self.hyperparams.get("logdet_reg", 0.0))
-        logdet_reg_penalty = logdet_reg * logdet_reg_loss
         jac_logdet = jac_logdet.detach()
         jac_std = jac_logdet.std(unbiased=False).item()
         self.print(
@@ -891,14 +868,6 @@ class FieldTransformation:
             f"grad_norm_pre_clip={grad_norm:.2e} "
             f"param_norm={param_norm:.2e} param_max_abs={param_max:.2e} "
             f"delta_norm_mean={delta_mean:.2e} delta_norm_max={delta_max:.2e} "
-            f"delta_reg_loss={delta_reg_loss:.2e} "
-            f"delta_reg_weight={delta_reg_weight:.2e} "
-            f"delta_reg_penalty={delta_reg_penalty:.2e} "
-            f"jac_force_reg={jac_force_reg:.2e} "
-            f"jac_force_reg_penalty={jac_force_reg_penalty:.2e} "
-            f"logdet_reg_loss={logdet_reg_loss:.2e} "
-            f"logdet_reg={logdet_reg:.2e} "
-            f"logdet_reg_penalty={logdet_reg_penalty:.2e} "
             f"loss_weights={self._loss_weights()} "
             f"force_weighted_loss={force_weighted_loss:.6f} "
             f"k0_abs_mean={coefficient_diag['k0_abs_mean']:.2e} "

@@ -4,6 +4,9 @@ This is an append-only development history for NTHMC.
 
 ## 2026-05-04
 
+- Converted the U(2) base transform and base CNN to a scalar-only gauge-symmetric diagnostic path, corrected the U(2) rectangle loop multiplication order for non-Abelian gauge invariance, removed U(2) debug regularizer CLI/loss terms, and added gauge-covariance/logdet-invariance tests.
+- Expanded `presentation/Field_transform.md` with the current U(2) scalar-only channel layout, the repository gauge-transform convention, and why gauge-symmetry breaking can destabilize transformed-force training.
+- Corrected `presentation/Field_transform.md` to separate U(2) invertibility from gauge covariance, note that ordinary CNNs over traceless color channels do not guarantee gauge symmetry, and outline a scalar-input/covariant-basis U(2) design.
 - Added U(2)-only configurable force-loss weights for the L2/L4/L6/L8 transformed-force objective, preserving the default equal-weight objective.
 - Extended `2du2/model_training/train.py` with `--loss_weights` and `--delta_reg` overrides for beta=8 high-order force-tail experiments.
 - Prepared the `2du2` beta=8 training entry point to accept tail-weighted and L6/L8-only ablation runs without changing the default source behavior.

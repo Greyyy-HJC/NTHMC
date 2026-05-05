@@ -16,20 +16,31 @@ The key structural distinction is:
 
 ## 1. Core Principle: Gauge Covariance
 
-Gauge transformation:
+Gauge transformation in the convention used by the current U(2) code:
 $$
-U_{x,\mu} \rightarrow G_x U_{x,\mu} G_{x+\hat\mu}^\dagger .
+U_{x,\mu} \rightarrow G_{x+\hat\mu} U_{x,\mu} G_x^\dagger .
 $$
 
 A field transformation $F$ satisfies:
 $$
-F(GUG^\dagger) = G F(U) G^\dagger .
+F(U^G) = F(U)^G .
 $$
 
 Transformations are built from local Wilson loops:
 
 - plaquettes
 - $1\times2$, $2\times1$ rectangles
+
+For non-Abelian groups, this statement is not enough by itself. A closed
+loop matrix based at site $x$ transforms by conjugation:
+$$
+C_x \rightarrow G_x C_x G_x^\dagger ,
+$$
+so its trace-like scalar features are gauge invariant, but its traceless
+color components are only gauge covariant in the color frame at the loop
+base point. Ordinary CNN channels are scalar channels; feeding untransported
+traceless color components to an ordinary CNN does not, by itself, preserve
+gauge covariance.
 
 Links are split into 8 checkerboard subsets:
 $$
@@ -87,6 +98,15 @@ $$
 \Delta(U) \in u(2)
 $$
 
+For the left-multiplication update of link $U_{x,\mu}$ to be gauge
+covariant in this convention, the algebra update must transform at the
+left endpoint $x+\hat\mu$:
+$$
+\Delta_{x,\mu}(U^G)
+=
+G_{x+\hat\mu} \Delta_{x,\mu}(U) G_{x+\hat\mu}^\dagger .
+$$
+
 ### Key structural property
 
 **CNN coefficients depend only on frozen subsets**, not on active links:
@@ -95,6 +115,104 @@ $$
 $$
 
 Thus Jacobian derivatives only arise from loop features.
+
+### Gauge-covariance issue in the old U(2) base implementation
+
+The old `src/nthmc/u2/field_transform.py` implementation used
+`loop_sin_cos_features`, including both trace-like scalar channels and
+traceless color-vector channels, as ordinary CNN inputs. It also lets the CNN
+output independent coefficients for phase and traceless algebra directions.
+
+This is sufficient for the local Jacobian analysis below, but it does **not**
+guarantee U(2) gauge covariance. The issue is that traceless color-vector
+features transform by local adjoint rotations, while the CNN treats channel
+components as fixed scalar channels. Therefore the old base transform could
+learn gauge-frame-dependent updates.
+
+This is the main structural difference from U(1). In U(1), the corresponding
+loop angles are gauge-invariant scalars because the group is Abelian.
+
+### Current scalar-only diagnostic implementation
+
+The current U(2) `base` implementation is the minimal gauge-symmetric
+diagnostic variant. It keeps the original full coefficient layout at the
+field-transform interface, but the CNN itself only sees gauge-invariant
+scalar features and only produces phase-update coefficients.
+
+For each loop, `loop_sin_cos_features` has 8 channels:
+
+- channel 0: scalar sin-like phase feature
+- channels 1:4: traceless sin-like color features
+- channel 4: scalar cos-like phase feature
+- channels 5:8: traceless cos-like color features
+
+The scalar-only U(2) base keeps only channels 0 and 4 before the CNN.
+Therefore:
+
+- plaquette CNN input has 2 channels
+- rectangle CNN input has 4 channels, from 2 rectangle orientations times
+  2 scalar channels
+
+The CNN outputs only phase coefficients:
+
+- plaquette: 4 loops times 2 phase slots = 8 nonzero channels
+- rectangle: 8 loops times 2 phase slots = 16 nonzero channels
+
+These are expanded back to the full field-transform layout:
+
+- plaquette full layout: 16 channels
+- rectangle full layout: 32 channels
+
+For each loop, coefficient slots 0 and 2 are phase slots, while slots 1 and
+3 are traceless color slots. The current base model sets slots 1 and 3 to
+zero. Thus the total full-layout output has 24 nonzero phase channels and
+24 identically zero traceless channels.
+
+This scalar-only update is gauge covariant because the update is proportional
+to the central generator $iI$. The scalar coefficient is gauge invariant, and
+$iI$ commutes with every local gauge rotation.
+
+The U(2) rectangle loop multiplication order must also be a closed
+non-Abelian Wilson loop. In U(1), the additive rectangle angle is insensitive
+to ordering, but in U(2) the matrix product order is physical. If the order
+does not close as a Wilson loop, even trace-like rectangle features are not
+gauge invariant.
+
+The current tests check:
+$$
+F(U^G)=F(U)^G,
+\qquad
+\log|\det J(U^G)|=\log|\det J(U)|.
+$$
+
+### Why broken gauge symmetry can damage training
+
+The target Wilson action is gauge invariant, so it is constant along each
+gauge orbit. A gauge-covariant field transform preserves this structure: the
+transformed potential
+$$
+S(F(U))-\log|\det J(U)|
+$$
+is also gauge invariant.
+
+If the learned transform is not gauge covariant, the transformed potential can
+vary along pure-gauge directions. This creates several training problems:
+
+- The force loss can reward cancellation patterns that depend on an arbitrary
+  gauge frame rather than on physical gauge-invariant structure.
+- The Jacobian force can acquire components along gauge-orbit directions even
+  though the target action has no physical restoring force there.
+- Gauge-equivalent configurations can produce different CNN coefficients,
+  making the loss noisier and harder to optimize.
+- The network can reduce the local training objective by creating gauge-frame
+  dependent Jacobian structure, but this need not improve FT-HMC acceptance
+  because the proposal then sees artificial gauge-orbit roughness.
+
+This explains why the U(2) loss can behave differently from U(1) under
+similar settings. In U(1), loop features are Abelian scalar angles. In U(2),
+untransported traceless loop components carry local color-frame information,
+so treating them as ordinary scalar CNN channels can break the symmetry that
+the HMC target distribution has.
 
 ---
 
@@ -197,7 +315,9 @@ $$
 |k_{\rm rect}| < \frac{1}{40}.
 $$
 
-These caps apply to all 16 plaquette coefficient channels and all 32 rectangle coefficient channels.
+In the current scalar-only base, these caps apply to the nonzero phase
+coefficient channels. The traceless coefficient channels are identically zero,
+so they are trivially bounded.
 
 For one U(2) loop, the sin-like and cos-like coefficient groups give the conservative derivative bound:
 $$
@@ -260,7 +380,88 @@ $$
 
 ---
 
-## 9. Global Invertibility
+## 9. Gauge-Covariant U(2) Design
+
+A gauge-covariant U(2) field transform should separate scalar neural-network
+data from color-covariant algebra data.
+
+For each active link $U_{x,\mu}$, use:
+
+1. **Gauge-invariant scalar CNN inputs**
+
+   Examples:
+   $$
+   \mathrm{ReTr}\,C,\quad \mathrm{Im}\det C,\quad
+   \mathrm{Re}\det C,\quad \mathrm{Tr}(C C^\dagger)
+   $$
+   for plaquette and rectangle loops. The ordinary CNN should only see such
+   scalar fields.
+
+2. **Gauge-invariant scalar CNN outputs**
+
+   The network outputs scalar coefficients:
+   $$
+   a^{(0)}_{x,\mu},\quad a^{(r)}_{x,\mu}.
+   $$
+   These coefficients are invariant under local gauge rotations.
+
+3. **Gauge-covariant algebra basis elements**
+
+   Build basis matrices $B^{(r)}_{x,\mu}$ from closed loops based at the
+   left endpoint $x+\hat\mu$, or from loops parallel transported to
+   $x+\hat\mu$.
+   Each basis element must transform as:
+   $$
+   B^{(r)}_{x,\mu}(U^G)
+   =
+   G_{x+\hat\mu} B^{(r)}_{x,\mu}(U) G_{x+\hat\mu}^\dagger .
+   $$
+
+   A standard traceless anti-Hermitian basis contribution is:
+   $$
+   B(C_x)
+   =
+   \left[
+   \frac{C_x-C_x^\dagger}{2}
+   -
+   \frac{1}{2}\mathrm{Tr}
+   \left(\frac{C_x-C_x^\dagger}{2}\right) I
+   \right] .
+   $$
+
+Then define:
+$$
+\Delta_{x,\mu}
+=
+a^{(0)}_{x,\mu}\, iI
++
+\sum_r a^{(r)}_{x,\mu} B^{(r)}_{x,\mu}.
+$$
+
+This transform has more freedom than U(1) because it can update SU(2)
+traceless directions through the covariant bases $B^{(r)}_{x,\mu}$, but it
+still preserves gauge covariance because all CNN inputs and outputs are scalar
+gauge invariants.
+
+### Practical minimum diagnostic variants
+
+- **Scalar-only diagnostic:** feed only gauge-invariant scalar loop features to
+  the CNN and update only the $iI$ phase direction. This should behave most
+  similarly to U(1), and is useful for isolating whether current U(2) loss
+  pathologies come from non-covariant color channels.
+- **Gauge-covariant U(2) base:** keep scalar CNN inputs, but add traceless
+  updates through transported adjoint loop bases as above.
+
+Both variants should be tested with:
+$$
+F(U^G)=F(U)^G,
+\qquad
+\log|\det J(U^G)|=\log|\det J(U)|.
+$$
+
+---
+
+## 10. Global Invertibility
 
 Each layer updates disjoint subsets → block factorization:
 
@@ -305,7 +506,7 @@ Composition of globally invertible subset layers gives a globally invertible fie
 
 ---
 
-## 10. Final Conclusions
+## 11. Final Conclusions
 
 ### U(1)
 
@@ -315,7 +516,7 @@ Composition of globally invertible subset layers gives a globally invertible fie
 
 ### U(2)
 
-Under assumptions:
+Under invertibility assumptions:
 
 - CNN depends only on frozen subsets
 - current `base` coefficient caps hold
@@ -330,9 +531,15 @@ $$
 
 This is a mathematical exact-arithmetic statement. Numerically, the current caps have little margin near saturated `tanh`, and the implemented inverse still relies on fixed-point iteration convergence.
 
+This statement is about invertibility, not gauge covariance. The current U(2)
+base implementation should not be claimed to preserve gauge symmetry unless
+its CNN inputs are restricted to gauge-invariant scalar features and its
+traceless updates are built from gauge-covariant algebra bases at the active
+link start point.
+
 ---
 
-## 11. Summary
+## 12. Summary
 
 | Property | U(1) | U(2) |
 |---|---|---|
@@ -341,3 +548,4 @@ This is a mathematical exact-arithmetic statement. Numerically, the current caps
 | Non-singular | guaranteed | guaranteed by current `base` caps |
 | Determinant sign | positive | positive |
 | Invertibility | global | global for current `base` caps |
+| Gauge covariance | automatic for scalar loop features | requires scalar CNN features and covariant adjoint bases |
