@@ -8,6 +8,7 @@ This is an append-only development history for NTHMC.
 - Updated the U(2) field-transform CNN input to use six gauge-invariant scalar features per closed loop, enabled all four coefficient slots per loop, and replaced the attached loop stack with site-`x` based Wilson loops covered by covariance/Jacobian tests.
 - Added the gauge-covariance derivation showing why non-Abelian loop stacks used in `Delta_{x,mu}` must be based at the active link's starting site.
 - Clarified that the U(2) CNN coefficient inputs use invariant plaquette/rectangle tensors, while the `Delta` update uses a separate active-site based attached loop stack.
+- Cleared stale 2du2 generated gauge configs, model checkpoints, CSV diagnostics, and plots that must be regenerated after the U(2) gauge-convention and field-transform changes.
 - Filled in the U(1) field-transform documentation with 8-subset updates, CNN input/output channels, phase-shift formulas, and the code-matched Jacobian cos/sin terms.
 - Reworked the U(2) gauge-invariant CNN input discussion in `presentation/Field_transform.md` to express `ReTr C`, `ImTr C`, `det C`, and `Tr C^n` in split phase-quaternion variables.
 - Expanded the gauge-covariance explanation in `presentation/Field_transform.md` to contrast Abelian U(1) scalar loop features with non-Abelian U(2) traceless color components.
