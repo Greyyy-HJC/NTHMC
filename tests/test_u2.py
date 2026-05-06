@@ -31,8 +31,16 @@ from nthmc.u1.u1_observables import (
 def gauge_transform_split(links: torch.Tensor, omega: torch.Tensor) -> torch.Tensor:
     """Apply a local U(2) gauge transform to split batch links."""
     transformed = links.clone()
-    transformed[:, 0] = u2_mul(u2_mul(torch.roll(omega, shifts=-1, dims=1), links[:, 0]), u2_conj(omega))
-    transformed[:, 1] = u2_mul(u2_mul(torch.roll(omega, shifts=-1, dims=2), links[:, 1]), u2_conj(omega))
+    transformed[:, 0] = u2_mul(u2_mul(omega, links[:, 0]), u2_conj(torch.roll(omega, shifts=-1, dims=1)))
+    transformed[:, 1] = u2_mul(u2_mul(omega, links[:, 1]), u2_conj(torch.roll(omega, shifts=-1, dims=2)))
+    return transformed
+
+
+def gauge_transform_u1(theta: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
+    """Apply theta_x,mu -> alpha_x + theta_x,mu - alpha_x+mu to a U(1) batch."""
+    transformed = theta.clone()
+    transformed[:, 0] = alpha + theta[:, 0] - torch.roll(alpha, shifts=-1, dims=1)
+    transformed[:, 1] = alpha + theta[:, 1] - torch.roll(alpha, shifts=-1, dims=2)
     return transformed
 
 
@@ -90,6 +98,72 @@ def test_rectangle_from_field_batch_returns_unitary_loops() -> None:
 
     assert rectangles.shape == (3, 2, 4, 4, 5)
     assert torch.allclose(matrices.mH @ matrices, identity.expand_as(matrices), atol=1e-5)
+
+
+def test_u2_plaquette_is_covariant_under_site_based_gauge_transform() -> None:
+    links = u2_exp(torch.randn(2, 2, 4, 4, 4))
+    omega = u2_exp(torch.randn(2, 4, 4, 4))
+
+    plaquettes = plaquette_from_field_batch(links)
+    gauge_plaquettes = plaquette_from_field_batch(gauge_transform_split(links, omega))
+    expected = u2_mul(u2_mul(omega, plaquettes), u2_conj(omega))
+
+    assert torch.allclose(u2_to_matrix(gauge_plaquettes), u2_to_matrix(expected), atol=1e-5)
+
+
+def test_u2_rectangles_are_covariant_under_site_based_gauge_transform() -> None:
+    links = u2_exp(torch.randn(2, 2, 4, 4, 4))
+    omega = u2_exp(torch.randn(2, 4, 4, 4))
+
+    rectangles = rectangle_from_field_batch(links)
+    gauge_rectangles = rectangle_from_field_batch(gauge_transform_split(links, omega))
+    expected = u2_mul(u2_mul(omega.unsqueeze(1), rectangles), u2_conj(omega).unsqueeze(1))
+
+    assert torch.allclose(u2_to_matrix(gauge_rectangles), u2_to_matrix(expected), atol=1e-5)
+
+
+def test_u2_action_and_topology_are_gauge_invariant() -> None:
+    links = u2_exp(0.2 * torch.randn(2, 2, 4, 4, 4))
+    omega = u2_exp(0.5 * torch.randn(2, 4, 4, 4))
+    transformed = gauge_transform_split(links, omega)
+
+    assert torch.allclose(action_from_field_batch(transformed, beta=2.0), action_from_field_batch(links, beta=2.0))
+    assert torch.allclose(topology_from_field(transformed[0]), topology_from_field(links[0]))
+
+
+def test_u2_field_transform_loop_stacks_are_based_at_active_site() -> None:
+    transform = FieldTransformation.__new__(FieldTransformation)
+    links = u2_exp(0.2 * torch.randn(2, 2, 4, 4, 4))
+    omega = u2_exp(0.5 * torch.randn(2, 4, 4, 4))
+    gauge_links = gauge_transform_split(links, omega)
+
+    plaq_stack = transform._plaq_loop_stack(links)
+    gauge_plaq_stack = transform._plaq_loop_stack(gauge_links)
+    rect_stack = transform._rect_loop_stack(links)
+    gauge_rect_stack = transform._rect_loop_stack(gauge_links)
+
+    omega_by_loop = omega.unsqueeze(1)
+    expected_plaq = u2_mul(u2_mul(omega_by_loop, plaq_stack), u2_conj(omega).unsqueeze(1))
+    expected_rect = u2_mul(u2_mul(omega_by_loop, rect_stack), u2_conj(omega).unsqueeze(1))
+
+    assert torch.allclose(u2_to_matrix(gauge_plaq_stack), u2_to_matrix(expected_plaq), atol=1e-5)
+    assert torch.allclose(u2_to_matrix(gauge_rect_stack), u2_to_matrix(expected_rect), atol=1e-5)
+
+
+def test_u1_loops_are_invariant_under_site_based_gauge_transform() -> None:
+    theta = torch.randn(2, 2, 4, 4)
+    alpha = torch.randn(2, 4, 4)
+
+    transformed = gauge_transform_u1(theta, alpha)
+    plaquettes = u1_plaq_from_field_batch(theta)
+    gauge_plaquettes = u1_plaq_from_field_batch(transformed)
+    rectangles = u1_rect_from_field_batch(theta)
+    gauge_rectangles = u1_rect_from_field_batch(transformed)
+
+    assert torch.allclose(torch.cos(gauge_plaquettes), torch.cos(plaquettes), atol=1e-5)
+    assert torch.allclose(torch.sin(gauge_plaquettes), torch.sin(plaquettes), atol=1e-5)
+    assert torch.allclose(torch.cos(gauge_rectangles), torch.cos(rectangles), atol=1e-5)
+    assert torch.allclose(torch.sin(gauge_rectangles), torch.sin(rectangles), atol=1e-5)
 
 
 def test_u2_loops_match_u1_angles_for_phase_embedded_fields() -> None:
@@ -170,7 +244,7 @@ def test_loop_delta_applies_orientation_only_to_sin_like_terms() -> None:
     assert torch.allclose(cos_delta_flipped, cos_delta, atol=1e-5)
 
 
-def test_u2_base_model_returns_phase_only_full_layout_coefficients() -> None:
+def test_u2_base_model_returns_full_layout_coefficients() -> None:
     model = LocalNet()
     plaq_features = torch.randn(2, 6, 4, 4)
     rect_features = torch.randn(2, 12, 4, 4)
@@ -181,10 +255,10 @@ def test_u2_base_model_returns_phase_only_full_layout_coefficients() -> None:
 
     assert plaq_coeffs.shape == (2, 16, 4, 4)
     assert rect_coeffs.shape == (2, 32, 4, 4)
-    assert torch.allclose(plaq_by_loop[:, :, 1], torch.zeros_like(plaq_by_loop[:, :, 1]))
-    assert torch.allclose(plaq_by_loop[:, :, 3], torch.zeros_like(plaq_by_loop[:, :, 3]))
-    assert torch.allclose(rect_by_loop[:, :, 1], torch.zeros_like(rect_by_loop[:, :, 1]))
-    assert torch.allclose(rect_by_loop[:, :, 3], torch.zeros_like(rect_by_loop[:, :, 3]))
+    assert torch.any(torch.abs(plaq_by_loop[:, :, 1]) > 0)
+    assert torch.any(torch.abs(plaq_by_loop[:, :, 3]) > 0)
+    assert torch.any(torch.abs(rect_by_loop[:, :, 1]) > 0)
+    assert torch.any(torch.abs(rect_by_loop[:, :, 3]) > 0)
 
 
 def test_identity_field_has_unit_plaquette_and_zero_action() -> None:
@@ -286,7 +360,7 @@ def test_field_transform_full_subset_float32_jacobian_check_tolerance() -> None:
     assert torch.allclose(manual, autograd, rtol=rtol, atol=atol)
 
 
-def test_scalar_only_field_transform_is_gauge_covariant() -> None:
+def test_field_transform_is_gauge_covariant_with_full_coefficient_slots() -> None:
     set_seed(1234)
     transform = FieldTransformation(4, n_subsets=8, identity_init=True, hyperparams={"init_std": 0.01})
     links = u2_exp(0.2 * torch.randn(1, 2, 4, 4, 4))
@@ -303,7 +377,7 @@ def test_scalar_only_field_transform_is_gauge_covariant() -> None:
     )
 
 
-def test_scalar_only_field_transform_logdet_is_gauge_invariant() -> None:
+def test_field_transform_logdet_is_gauge_invariant_with_full_coefficient_slots() -> None:
     set_seed(1234)
     transform = FieldTransformation(4, n_subsets=8, identity_init=True, hyperparams={"init_std": 0.01})
     links = u2_exp(0.2 * torch.randn(1, 2, 4, 4, 4))

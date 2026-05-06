@@ -114,9 +114,9 @@ $$
 P_{x,01}
 =
 U_{x,0}
-U_{x,1}^\dagger
+U_{x+\hat 0,1}
 U_{x+\hat 1,0}^\dagger
-U_{x+\hat 0,1}.
+U_{x,1}^\dagger.
 $$
 
 In split form, the plaquette is stored as
@@ -204,9 +204,9 @@ $$
 P_{x,01}
 =
 U_{x,0}
-U_{x,1}^\dagger
+U_{x+\hat 0,1}
 U_{x+\hat 1,0}^\dagger
-U_{x+\hat 0,1},
+U_{x,1}^\dagger,
 $$
 then uses the determinant phase:
 $$
@@ -241,7 +241,7 @@ rounding convention.
 
 Gauge transformation:
 $$
-U_{x,\mu} \rightarrow U^G_{x,\mu} \equiv G_{x+\hat\mu} U_{x,\mu} G_x^\dagger .
+U_{x,\mu} \rightarrow U^G_{x,\mu} \equiv G_x U_{x,\mu} G_{x+\hat\mu}^\dagger .
 $$
 
 A gauge-covariant field transformation $F$ should satisfy:
@@ -593,8 +593,6 @@ which is the `torch.log(1 + plaq_jac_shift + rect_jac_shift)` expression in
 
 ## U(2) Field Transformation
 
-### Representation
-
 For U(2), each link is represented in the split convention
 $$
 U_{x,\mu}=e^{i\phi_{x,\mu}}q_{x,\mu},
@@ -633,14 +631,60 @@ followed by phase wrapping and quaternion normalization in the implementation.
 For this update to be gauge covariant under
 $$
 U_{x,\mu}\rightarrow U^G_{x,\mu}
-=G_{x+\hat\mu}U_{x,\mu}G_x^\dagger,
+=G_xU_{x,\mu}G_{x+\hat\mu}^\dagger,
 $$
-the algebra update must transform at the left endpoint:
+the algebra update must transform in the site-$x$ color frame:
 $$
 \Delta_{x,\mu}(U^G)
 =
-G_{x+\hat\mu} \Delta_{x,\mu}(U) G_{x+\hat\mu}^\dagger .
+G_x \Delta_{x,\mu}(U) G_x^\dagger .
 $$
+Equivalently, suppose the input field has already been gauge transformed,
+$$
+\widetilde U'_{x,\mu}
+=
+G_x\widetilde U_{x,\mu}G_{x+\hat\mu}^\dagger,
+$$
+and the field transformation is applied by left multiplication:
+$$
+U_{x,\mu}
+=
+e^{\Delta_{x,\mu}}\widetilde U_{x,\mu},
+\qquad
+U'_{x,\mu}
+=
+e^{\Delta'_{x,\mu}}\widetilde U'_{x,\mu}.
+$$
+Gauge covariance requires $U'_{x,\mu}=G_xU_{x,\mu}G_{x+\hat\mu}^\dagger$.
+Substituting the left-multiplied update gives
+$$
+G_x e^{\Delta_{x,\mu}}\widetilde U_{x,\mu}
+G_{x+\hat\mu}^\dagger
+=
+e^{\Delta'_{x,\mu}}
+G_x\widetilde U_{x,\mu}G_{x+\hat\mu}^\dagger .
+$$
+After canceling the common right factor, the required condition is
+$$
+G_x e^{\Delta_{x,\mu}}G_x^\dagger
+=
+e^{\Delta'_{x,\mu}},
+\qquad\text{so}\qquad
+\Delta'_{x,\mu}
+=
+G_x\Delta_{x,\mu}G_x^\dagger .
+$$
+This fixes the gauge frame of every non-Abelian object used to build
+$\Delta_{x,\mu}$. If a loop contribution uses the traceless components of a
+closed loop $C_l$, then that loop must transform in the same site-$x$ frame:
+$$
+C_l(U^G)=G_x C_l(U)G_x^\dagger .
+$$
+Therefore each attached plaquette or rectangle in the $\Delta_{x,\mu}$ loop
+stack must be written as a cyclic Wilson loop that starts and ends at the
+active link's starting site $x$. A closed loop based at another site would
+rotate in a different local gauge frame, and its color-vector components could
+not be added directly to the left-multiplied update for $U_{x,\mu}$.
 
 ### Subset update
 
@@ -750,7 +794,10 @@ $|P(\ell)|=2$ and $|R(\ell)|=4$.
 For link direction $\mu=0$, the active update uses the two plaquette stack
 entries associated with direction 0 and the four rectangle stack entries
 associated with direction 0. For $\mu=1$, it uses the corresponding direction
-1 stack entries. The orientation signs are the same pattern as U(1):
+1 stack entries. In the U(2) implementation each attached plaquette and
+rectangle loop is cyclically represented as a closed Wilson loop based at the
+active link's site-$x$ frame. The orientation signs are the same pattern as
+U(1):
 $$
 \sigma^{(p)}=(-1,+1,+1,-1),
 \qquad
@@ -809,11 +856,10 @@ $$
 \sum_{l\in P(\ell)\cup R(\ell)}
 (\Delta_{\phi,l},\Delta_{1,l},\Delta_{2,l},\Delta_{3,l}).
 $$
-If traceless components are used, the loop component vector
-$(q_{1,l},q_{2,l},q_{3,l})$ must be based at, or parallel transported to, the
-active link's left endpoint so that the resulting
-$(\Delta_{1,l},\Delta_{2,l},\Delta_{3,l})$ transforms in the correct local
-color frame.
+Because the attached loop stack is based at the active link's site-$x$ frame,
+the loop component vector $(q_{1,l},q_{2,l},q_{3,l})$ and the resulting
+$(\Delta_{1,l},\Delta_{2,l},\Delta_{3,l})$ transform in the correct local
+adjoint frame.
 
 ### Jacobian
 

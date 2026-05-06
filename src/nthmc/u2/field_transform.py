@@ -34,6 +34,8 @@ from nthmc.u2.u2_observables import (
     u2_normalize,
 )
 
+LoopToken = tuple[int, int | tuple[int, int] | None, int | tuple[int, int] | None, bool]
+
 
 class FieldTransformation:
     """Loop-term U(2) field transformation for FT-HMC."""
@@ -207,15 +209,6 @@ class FieldTransformation:
             dim=-1,
         )
 
-    def _phase_only_coeffs(self, coeffs: torch.Tensor, n_loops: int) -> torch.Tensor:
-        """Keep only phase-update coefficient slots while preserving tensor shape."""
-        batch_size = coeffs.shape[0]
-        coeffs_by_loop = coeffs.reshape(batch_size, n_loops, 4, self.lattice_size, self.lattice_size)
-        phase_mask = torch.zeros(4, device=coeffs.device, dtype=coeffs.dtype)
-        phase_mask[[0, 2]] = 1
-        coeffs_by_loop = coeffs_by_loop * phase_mask.view(1, 1, 4, 1, 1)
-        return coeffs_by_loop.reshape_as(coeffs)
-
     def compute_coefficients(
         self,
         links: torch.Tensor,
@@ -238,37 +231,173 @@ class FieldTransformation:
         plaq_coeffs, rect_coeffs = output
         if plaq_coeffs.shape[1] != 16 or rect_coeffs.shape[1] != 32:
             raise ValueError("field_transform expects 16 plaquette and 32 rectangle coefficient channels")
-        return self._phase_only_coeffs(plaq_coeffs, 4), self._phase_only_coeffs(rect_coeffs, 8)
+        return plaq_coeffs, rect_coeffs
 
-    def _plaq_loop_stack(self, plaq: torch.Tensor) -> torch.Tensor:
-        """Stack the four plaquette loops touching each active link."""
-        return torch.stack(
-            [
-                plaq,
-                torch.roll(plaq, shifts=1, dims=2),
-                plaq,
-                torch.roll(plaq, shifts=1, dims=1),
-            ],
-            dim=1,
-        )
+    def _loop_product(self, parts: list[torch.Tensor]) -> torch.Tensor:
+        value = parts[0]
+        for part in parts[1:]:
+            value = u2_mul(value, part)
+        return value
 
-    def _rect_loop_stack(self, rect: torch.Tensor) -> torch.Tensor:
-        """Stack the eight rectangle loops touching each active link."""
-        rect0 = rect[:, 0]
-        rect1 = rect[:, 1]
-        return torch.stack(
+    def _loop_product_with_tangent(
+        self,
+        parts: list[tuple[torch.Tensor, torch.Tensor]],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        value, value_tangent = parts[0]
+        for next_value, next_tangent in parts[1:]:
+            value, value_tangent = self._mul_with_tangent(value, value_tangent, next_value, next_tangent)
+        return value, value_tangent
+
+    def _resolve_loop_token(
+        self,
+        link0: torch.Tensor,
+        link1: torch.Tensor,
+        token: LoopToken,
+    ) -> torch.Tensor:
+        direction, shifts, dims, is_inverse = token
+        value = link0 if direction == 0 else link1
+        if shifts is not None and dims is not None:
+            value = torch.roll(value, shifts=shifts, dims=dims)
+        return u2_conj(value) if is_inverse else value
+
+    def _resolve_loop_token_with_tangent(
+        self,
+        link0: torch.Tensor,
+        link1: torch.Tensor,
+        tangent0: torch.Tensor,
+        tangent1: torch.Tensor,
+        token: LoopToken,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        direction, shifts, dims, is_inverse = token
+        value = link0 if direction == 0 else link1
+        tangent = tangent0 if direction == 0 else tangent1
+        if shifts is not None and dims is not None:
+            value = torch.roll(value, shifts=shifts, dims=dims)
+            tangent = torch.roll(tangent, shifts=shifts, dims=dims)
+        return self._conj_with_tangent(value, tangent) if is_inverse else (value, tangent)
+
+    def _stack_loop_specs(self, links: torch.Tensor, specs: list[list[LoopToken]]) -> torch.Tensor:
+        links = u2_normalize(links)
+        link0, link1 = links[:, 0], links[:, 1]
+        loops = [
+            self._loop_product([self._resolve_loop_token(link0, link1, token) for token in loop_spec])
+            for loop_spec in specs
+        ]
+        return torch.stack(loops, dim=1)
+
+    def _stack_loop_specs_with_tangent(
+        self,
+        links: torch.Tensor,
+        tangent: torch.Tensor,
+        specs: list[list[LoopToken]],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        links = u2_normalize(links)
+        link0, link1 = links[:, 0], links[:, 1]
+        tangent0, tangent1 = tangent[:, 0], tangent[:, 1]
+        loop_values = []
+        loop_tangents = []
+        for loop_spec in specs:
+            value, value_tangent = self._loop_product_with_tangent(
+                [
+                    self._resolve_loop_token_with_tangent(link0, link1, tangent0, tangent1, token)
+                    for token in loop_spec
+                ]
+            )
+            loop_values.append(value)
+            loop_tangents.append(value_tangent)
+        return torch.stack(loop_values, dim=1), torch.stack(loop_tangents, dim=1)
+
+    def _plaq_loop_specs(self) -> list[list[LoopToken]]:
+        """Return plaquette loops touching active links, all based at the active site x."""
+        return [
+            [(0, None, None, False), (1, -1, 1, False), (0, -1, 2, True), (1, None, None, True)],
+            [(1, 1, 2, True), (0, 1, 2, False), (1, (-1, 1), (1, 2), False), (0, None, None, True)],
+            [(0, None, None, False), (1, -1, 1, False), (0, -1, 2, True), (1, None, None, True)],
+            [(1, None, None, False), (0, (1, -1), (1, 2), True), (1, 1, 1, True), (0, 1, 1, False)],
+        ]
+
+    def _rect_loop_specs(self) -> list[list[LoopToken]]:
+        """Return rectangle loops touching active links, all based at the active site x."""
+        return [
             [
-                torch.roll(rect0, shifts=1, dims=1),
-                torch.roll(rect0, shifts=(1, 1), dims=(1, 2)),
-                rect0,
-                torch.roll(rect0, shifts=1, dims=2),
-                torch.roll(rect1, shifts=1, dims=2),
-                torch.roll(rect1, shifts=(1, 1), dims=(1, 2)),
-                rect1,
-                torch.roll(rect1, shifts=1, dims=1),
+                (0, None, None, False),
+                (1, -1, 1, False),
+                (0, -1, 2, True),
+                (0, (1, -1), (1, 2), True),
+                (1, 1, 1, True),
+                (0, 1, 1, False),
             ],
-            dim=1,
-        )
+            [
+                (0, 1, 1, True),
+                (1, (1, 1), (1, 2), True),
+                (0, (1, 1), (1, 2), False),
+                (0, 1, 2, False),
+                (1, (-1, 1), (1, 2), False),
+                (0, None, None, True),
+            ],
+            [
+                (0, None, None, False),
+                (0, -1, 1, False),
+                (1, -2, 1, False),
+                (0, (-1, -1), (1, 2), True),
+                (0, -1, 2, True),
+                (1, None, None, True),
+            ],
+            [
+                (1, 1, 2, True),
+                (0, 1, 2, False),
+                (0, (-1, 1), (1, 2), False),
+                (1, (-2, 1), (1, 2), False),
+                (0, -1, 1, True),
+                (0, None, None, True),
+            ],
+            [
+                (1, 1, 2, True),
+                (0, 1, 2, False),
+                (1, (-1, 1), (1, 2), False),
+                (1, -1, 1, False),
+                (0, -1, 2, True),
+                (1, None, None, True),
+            ],
+            [
+                (1, None, None, False),
+                (0, (1, -1), (1, 2), True),
+                (1, 1, 1, True),
+                (1, (1, 1), (1, 2), True),
+                (0, (1, 1), (1, 2), False),
+                (1, 1, 2, False),
+            ],
+            [
+                (0, None, None, False),
+                (1, -1, 1, False),
+                (1, (-1, -1), (1, 2), False),
+                (0, -2, 2, True),
+                (1, -1, 2, True),
+                (1, None, None, True),
+            ],
+            [
+                (1, None, None, False),
+                (1, -1, 2, False),
+                (0, (1, -2), (1, 2), True),
+                (1, (1, -1), (1, 2), True),
+                (1, 1, 1, True),
+                (0, 1, 1, False),
+            ],
+        ]
+
+    def _plaq_loop_stack(self, links: torch.Tensor) -> torch.Tensor:
+        """Stack based plaquette loops touching each active link."""
+        return self._stack_loop_specs(links, self._plaq_loop_specs())
+
+    def _rect_loop_stack(self, links: torch.Tensor) -> torch.Tensor:
+        """Stack based rectangle loops touching each active link."""
+        return self._stack_loop_specs(links, self._rect_loop_specs())
+
+    def _plaq_loop_stack_with_tangent(self, links: torch.Tensor, tangent: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        return self._stack_loop_specs_with_tangent(links, tangent, self._plaq_loop_specs())
+
+    def _rect_loop_stack_with_tangent(self, links: torch.Tensor, tangent: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        return self._stack_loop_specs_with_tangent(links, tangent, self._rect_loop_specs())
 
     def _loop_delta(self, coeffs: torch.Tensor, loops: torch.Tensor, signs: torch.Tensor) -> torch.Tensor:
         """Return per-loop U(2) algebra contributions."""
@@ -323,16 +452,16 @@ class FieldTransformation:
         link0, link1 = links[:, 0], links[:, 1]
         tangent0, tangent1 = tangent[:, 0], tangent[:, 1]
 
-        conj_link1, conj_tangent1 = self._conj_with_tangent(link1, tangent1)
+        rolled_link1 = torch.roll(link1, shifts=-1, dims=1)
+        rolled_tangent1 = torch.roll(tangent1, shifts=-1, dims=1)
         rolled_link0 = torch.roll(link0, shifts=-1, dims=2)
         rolled_tangent0 = torch.roll(tangent0, shifts=-1, dims=2)
         conj_rolled_link0, conj_rolled_tangent0 = self._conj_with_tangent(rolled_link0, rolled_tangent0)
-        rolled_link1 = torch.roll(link1, shifts=-1, dims=1)
-        rolled_tangent1 = torch.roll(tangent1, shifts=-1, dims=1)
+        conj_link1, conj_tangent1 = self._conj_with_tangent(link1, tangent1)
 
-        value, value_tangent = self._mul_with_tangent(link0, tangent0, conj_link1, conj_tangent1)
+        value, value_tangent = self._mul_with_tangent(link0, tangent0, rolled_link1, rolled_tangent1)
         value, value_tangent = self._mul_with_tangent(value, value_tangent, conj_rolled_link0, conj_rolled_tangent0)
-        return self._mul_with_tangent(value, value_tangent, rolled_link1, rolled_tangent1)
+        return self._mul_with_tangent(value, value_tangent, conj_link1, conj_tangent1)
 
     def _rectangle_with_tangent(self, links: torch.Tensor, tangent: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         links = u2_normalize(links)
@@ -352,19 +481,19 @@ class FieldTransformation:
 
         rect0_parts = [
             (link0, tangent0),
-            conj_pair(link1, tangent1),
-            conj_pair(*roll_pair(link0, tangent0, -1, 2)),
-            conj_pair(*roll_pair(link0, tangent0, (-1, -1), (1, 2))),
-            roll_pair(link1, tangent1, -2, 1),
             roll_pair(link0, tangent0, -1, 1),
+            roll_pair(link1, tangent1, -2, 1),
+            conj_pair(*roll_pair(link0, tangent0, (-1, -1), (1, 2))),
+            conj_pair(*roll_pair(link0, tangent0, -1, 2)),
+            conj_pair(link1, tangent1),
         ]
         rect1_parts = [
             (link0, tangent0),
-            conj_pair(link1, tangent1),
-            conj_pair(*roll_pair(link1, tangent1, -1, 2)),
-            conj_pair(*roll_pair(link0, tangent0, -2, 2)),
-            roll_pair(link1, tangent1, (-1, -1), (1, 2)),
             roll_pair(link1, tangent1, -1, 1),
+            roll_pair(link1, tangent1, (-1, -1), (1, 2)),
+            conj_pair(*roll_pair(link0, tangent0, -2, 2)),
+            conj_pair(*roll_pair(link1, tangent1, -1, 2)),
+            conj_pair(link1, tangent1),
         ]
 
         rect_values = []
@@ -469,8 +598,6 @@ class FieldTransformation:
         self,
         links: torch.Tensor,
         index: int,
-        plaq: torch.Tensor,
-        rect: torch.Tensor,
         plaq_coeffs: torch.Tensor,
         rect_coeffs: torch.Tensor,
         delta: torch.Tensor,
@@ -479,12 +606,8 @@ class FieldTransformation:
         mask = get_link_mask(index, batch_size, self.lattice_size, self.device)
         link_tangent = self._identity_tangent_like(links) * mask.to(links.dtype).unsqueeze(-1)
 
-        _, plaq_tangent_base = self._plaquette_with_tangent(links, link_tangent)
-        _, rect_tangent_base = self._rectangle_with_tangent(links, link_tangent)
-        plaq_tangent = self._plaq_loop_stack(plaq_tangent_base)
-        rect_tangent = self._rect_loop_stack(rect_tangent_base)
-        plaq_loops = self._plaq_loop_stack(plaq)
-        rect_loops = self._rect_loop_stack(rect)
+        plaq_loops, plaq_tangent = self._plaq_loop_stack_with_tangent(links, link_tangent)
+        rect_loops, rect_tangent = self._rect_loop_stack_with_tangent(links, link_tangent)
 
         delta_jac = self._plaq_delta_jac(plaq_coeffs, plaq_loops, plaq_tangent)
         delta_jac = delta_jac + self._rect_delta_jac(rect_coeffs, rect_loops, rect_tangent)
@@ -497,8 +620,8 @@ class FieldTransformation:
         batch_size = links.shape[0]
         plaq = plaquette_from_field_batch(links)
         rect = rectangle_from_field_batch(links)
-        plaq_loops = self._plaq_loop_stack(plaq)
-        rect_loops = self._rect_loop_stack(rect)
+        plaq_loops = self._plaq_loop_stack(links)
+        rect_loops = self._rect_loop_stack(links)
         plaq_coeffs, rect_coeffs = self.compute_coefficients(links, index, plaq, rect)
         delta = self._plaq_delta(plaq_coeffs, plaq_loops) + self._rect_delta(rect_coeffs, rect_loops)
         mask = get_link_mask(index, batch_size, self.lattice_size, self.device)
@@ -594,8 +717,8 @@ class FieldTransformation:
         for index in range(self.n_subsets):
             plaq = plaquette_from_field_batch(links_curr)
             rect = rectangle_from_field_batch(links_curr)
-            plaq_loops = self._plaq_loop_stack(plaq)
-            rect_loops = self._rect_loop_stack(rect)
+            plaq_loops = self._plaq_loop_stack(links_curr)
+            rect_loops = self._rect_loop_stack(links_curr)
             plaq_coeffs, rect_coeffs = self.compute_coefficients(links_curr, index, plaq, rect)
             delta = self._plaq_delta(plaq_coeffs, plaq_loops) + self._rect_delta(rect_coeffs, rect_loops)
             mask = get_link_mask(index, batch_size, self.lattice_size, self.device)
@@ -604,8 +727,6 @@ class FieldTransformation:
             jacobian_blocks = self._layer_jacobian_blocks(
                 links_curr,
                 index,
-                plaq,
-                rect,
                 plaq_coeffs,
                 rect_coeffs,
                 delta,
@@ -815,8 +936,8 @@ class FieldTransformation:
         for index in range(self.n_subsets):
             plaq = plaquette_from_field_batch(links_curr)
             rect = rectangle_from_field_batch(links_curr)
-            plaq_loops = self._plaq_loop_stack(plaq)
-            rect_loops = self._rect_loop_stack(rect)
+            plaq_loops = self._plaq_loop_stack(links_curr)
+            rect_loops = self._rect_loop_stack(links_curr)
             plaq_coeffs, rect_coeffs = self.compute_coefficients(links_curr, index, plaq, rect)
             plaq_coeff_abs.append(torch.abs(plaq_coeffs).reshape(plaq_coeffs.shape[0], -1))
             rect_coeff_abs.append(torch.abs(rect_coeffs).reshape(rect_coeffs.shape[0], -1))

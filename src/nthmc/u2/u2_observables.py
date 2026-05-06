@@ -130,10 +130,10 @@ def plaquette_from_field(links: torch.Tensor) -> torch.Tensor:
     link0, link1 = links[0], links[1]
     return u2_mul(
         u2_mul(
-            u2_mul(link0, u2_conj(link1)),
+            u2_mul(link0, torch.roll(link1, shifts=-1, dims=0)),
             u2_conj(torch.roll(link0, shifts=-1, dims=1)),
         ),
-        torch.roll(link1, shifts=-1, dims=0),
+        u2_conj(link1),
     )
 
 
@@ -143,10 +143,10 @@ def plaquette_from_field_batch(links: torch.Tensor) -> torch.Tensor:
     link0, link1 = links[:, 0], links[:, 1]
     return u2_mul(
         u2_mul(
-            u2_mul(link0, u2_conj(link1)),
+            u2_mul(link0, torch.roll(link1, shifts=-1, dims=1)),
             u2_conj(torch.roll(link0, shifts=-1, dims=2)),
         ),
-        torch.roll(link1, shifts=-1, dims=1),
+        u2_conj(link1),
     )
 
 
@@ -159,27 +159,27 @@ def rectangle_from_field_batch(links: torch.Tensor) -> torch.Tensor:
         u2_mul(
             u2_mul(
                 u2_mul(
-                    u2_mul(link0, u2_conj(link1)),
-                    u2_conj(torch.roll(link0, shifts=-1, dims=2)),
+                    u2_mul(link0, torch.roll(link0, shifts=-1, dims=1)),
+                    torch.roll(link1, shifts=-2, dims=1),
                 ),
                 u2_conj(torch.roll(link0, shifts=(-1, -1), dims=(1, 2))),
             ),
-            torch.roll(link1, shifts=-2, dims=1),
+            u2_conj(torch.roll(link0, shifts=-1, dims=2)),
         ),
-        torch.roll(link0, shifts=-1, dims=1),
+        u2_conj(link1),
     )
     rect1 = u2_mul(
         u2_mul(
             u2_mul(
                 u2_mul(
-                    u2_mul(link0, u2_conj(link1)),
-                    u2_conj(torch.roll(link1, shifts=-1, dims=2)),
+                    u2_mul(link0, torch.roll(link1, shifts=-1, dims=1)),
+                    torch.roll(link1, shifts=(-1, -1), dims=(1, 2)),
                 ),
                 u2_conj(torch.roll(link0, shifts=-2, dims=2)),
             ),
-            torch.roll(link1, shifts=(-1, -1), dims=(1, 2)),
+            u2_conj(torch.roll(link1, shifts=-1, dims=2)),
         ),
-        torch.roll(link1, shifts=-1, dims=1),
+        u2_conj(link1),
     )
     return torch.stack([rect0, rect1], dim=1)
 
