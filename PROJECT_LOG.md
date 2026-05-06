@@ -4,6 +4,7 @@ This is an append-only development history for NTHMC.
 
 ## 2026-05-06
 
+- Reduced U(2) validation/diagnostic GPU memory use by disabling higher-order transformed-force graphs outside training steps and clearing optimizer gradients with `set_to_none=True`.
 - Migrated the U(2) gauge convention to `U^G_{x,mu} = G_x U_{x,mu} G^dagger_{x+mu}`, updated non-Abelian plaquette/rectangle loop ordering and tangent propagation, and added covariance tests.
 - Updated the U(2) field-transform CNN input to use six gauge-invariant scalar features per closed loop, enabled all four coefficient slots per loop, and replaced the attached loop stack with site-`x` based Wilson loops covered by covariance/Jacobian tests.
 - Added the gauge-covariance derivation showing why non-Abelian loop stacks used in `Delta_{x,mu}` must be based at the active link's starting site.

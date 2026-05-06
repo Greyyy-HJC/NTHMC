@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Union
 
 import matplotlib
 
@@ -34,7 +35,7 @@ from nthmc.u2.u2_observables import (
     u2_normalize,
 )
 
-LoopToken = tuple[int, int | tuple[int, int] | None, int | tuple[int, int] | None, bool]
+LoopToken = tuple[int, Union[int, tuple[int, int], None], Union[int, tuple[int, int], None], bool]
 
 
 class FieldTransformation:
@@ -840,6 +841,8 @@ class FieldTransformation:
         self,
         links: torch.Tensor,
         beta: float,
+        *,
+        create_graph: bool = True,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         algebra = torch.zeros(
             (*links.shape[:-1], 4),
@@ -851,16 +854,29 @@ class FieldTransformation:
         links_ori = self.forward_compiled(varied_links)
         action = self.compute_action_compiled(links_ori, beta)
         jac_logdet = self.compute_jac_logdet_compiled(varied_links)
-        action_force = torch.autograd.grad(action.sum(), algebra, create_graph=True, retain_graph=True)[0]
-        jac_force = torch.autograd.grad(jac_logdet.sum(), algebra, create_graph=True)[0]
+        action_force = torch.autograd.grad(
+            action.sum(),
+            algebra,
+            create_graph=create_graph,
+            retain_graph=True,
+        )[0]
+        jac_force = torch.autograd.grad(
+            jac_logdet.sum(),
+            algebra,
+            create_graph=create_graph,
+        )[0]
         total_force = action_force - jac_force
         return total_force, action_force, jac_force, jac_logdet
 
-    def loss_fn(self, links_ori: torch.Tensor) -> torch.Tensor:
+    def loss_fn(self, links_ori: torch.Tensor, *, create_graph: bool = True) -> torch.Tensor:
         if self.train_beta is None:
             raise RuntimeError("train_beta is not set")
         links_new = self.inverse(links_ori)
-        force_new, _, _, _ = self.compute_transformed_force_terms(links_new, self.train_beta)
+        force_new, _, _, _ = self.compute_transformed_force_terms(
+            links_new,
+            self.train_beta,
+            create_graph=create_graph,
+        )
         return self._weighted_force_loss_tensor(force_new)
 
     def _loss_weights(self) -> tuple[float, float, float, float]:
@@ -993,6 +1009,7 @@ class FieldTransformation:
             force, action_force, jac_force, jac_logdet = self.compute_transformed_force_terms(
                 inv.detach(),
                 self.train_beta,
+                create_graph=False,
             )
             force_components = self._force_loss_components(force)
             action_force_components = self._force_loss_components(action_force)
@@ -1045,7 +1062,7 @@ class FieldTransformation:
         links_ori = links_ori.to(self.device)
         loss = self.loss_fn(links_ori)
         for optimizer in self.optimizers:
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
         self.backward(loss)
         grad_norm = self._gradient_norm()
         self._clip_gradients()
@@ -1055,7 +1072,7 @@ class FieldTransformation:
 
     def evaluate_step(self, links_ori: torch.Tensor) -> float:
         links_ori = links_ori.to(self.device)
-        loss = self.loss_fn(links_ori)
+        loss = self.loss_fn(links_ori, create_graph=False)
         return float(loss.detach().cpu())
 
     def train(self, train_data: torch.Tensor, test_data: torch.Tensor, train_beta: float, *, n_epochs: int, batch_size: int) -> None:
