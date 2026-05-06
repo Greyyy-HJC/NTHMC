@@ -732,6 +732,15 @@ For U(2), the rectangle multiplication order is part of the definition: the
 product must be a closed non-Abelian Wilson loop. Unlike U(1), changing the
 order changes the matrix-valued loop.
 
+These plaquette and rectangle tensors are used only to build the
+gauge-invariant scalar inputs for the CNN coefficients. The update
+$\Delta_{x,\mu}$ is built from a separate attached loop stack,
+`_plaq_loop_stack(U)` and `_rect_loop_stack(U)`, whose entries are cyclically
+represented as Wilson loops based at the active link's site $x$. This
+separation is harmless for the CNN inputs because their scalar traces and
+determinants do not depend on the loop base point, but it is required for the
+traceless components that enter $\Delta_{x,\mu}$.
+
 For a closed loop
 $$
 C=e^{i\phi}q,
@@ -1193,8 +1202,10 @@ block rather than a scalar. Gauge covariance requires the CNN to see only
 gauge-invariant scalar loop inputs, such as $q_0\cos\phi$, $q_0\sin\phi$,
 $\cos\phi$, $\sin\phi$, $2(2q_0^2-1)\cos(2\phi)$, and
 $2(2q_0^2-1)\sin(2\phi)$. The update itself is written in the split
-coordinates $(\phi,q_0,q_1,q_2,q_3)$, and any traceless component must be
-based or transported so it transforms in the active link's local color frame.
+coordinates $(\phi,q_0,q_1,q_2,q_3)$. In the current implementation, every
+traceless loop component used in the update is taken from a Wilson loop based
+at the active link's starting site, so it transforms in the active link's
+local color frame.
 
 The same masking idea is essential in both groups: within one subset, the CNN
 coefficients are computed from frozen links and do not depend on the active
