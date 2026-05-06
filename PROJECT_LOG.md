@@ -2,6 +2,13 @@
 
 This is an append-only development history for NTHMC.
 
+## 2026-05-06
+
+- Added the current 2du1 and 2du2 topological-charge definitions to `presentation/Field_transform.md`.
+- Documented the current 2du2 split U(2) representation as a central U(1) phase plus SU(2) quaternion, matching the code's group operations and algebra layout.
+- Expanded the old U(2) base gauge-covariance discussion with the explicit `loop_sin_cos_features` channel structure and how the full field-transform layout used central and traceless loop components.
+- Clarified the old U(2) base discussion by separating CNN input loop features from CNN output coefficient slots.
+
 ## 2026-05-04
 
 - Converted the U(2) base transform and base CNN to a scalar-only gauge-symmetric diagnostic path, corrected the U(2) rectangle loop multiplication order for non-Abelian gauge invariance, removed U(2) debug regularizer CLI/loss terms, and added gauge-covariance/logdet-invariance tests.

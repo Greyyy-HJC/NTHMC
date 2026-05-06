@@ -88,6 +88,57 @@ $$
 U = (\phi, q), \quad q \in SU(2)
 $$
 
+This is the split representation used by the current `src/nthmc/u2` code.
+Each link is stored as a real tensor with last dimension 5:
+$$
+U_{x,\mu}
+\leftrightarrow
+(\phi_{x,\mu}, q_{0,x,\mu}, q_{1,x,\mu}, q_{2,x,\mu}, q_{3,x,\mu}),
+\qquad
+q_0^2+q_1^2+q_2^2+q_3^2=1.
+$$
+
+The corresponding complex matrix is
+$$
+U
+=
+e^{i\phi}
+\begin{pmatrix}
+q_0+i q_3 & q_2+i q_1 \\
+-q_2+i q_1 & q_0-i q_3
+\end{pmatrix}.
+$$
+
+Thus the U(2) degree of freedom is handled as a central U(1) phase times an
+SU(2) unit quaternion. In group operations, the code keeps these two parts
+separate:
+
+- `u2_normalize` wraps $\phi$ to $[-\pi,\pi)$ and normalizes $q$.
+- `u2_mul` adds the U(1) phases and multiplies the SU(2) quaternions.
+- `u2_conj` negates the phase and quaternion-conjugates the SU(2) part.
+- `u2_exp` maps four real algebra coefficients to
+  $(\phi,\exp_{SU(2)} a)$, with one central phase direction and three
+  traceless SU(2) directions.
+
+Equivalently, the tangent algebra used by HMC and the field transform is
+represented as
+$$
+u(2) \simeq u(1)\oplus su(2),
+\qquad
+\Delta = (\Delta_\phi,\Delta_1,\Delta_2,\Delta_3).
+$$
+
+The matrix-to-split conversion follows the same convention:
+$$
+\phi = \frac{1}{2}\arg\det U,
+\qquad
+q = e^{-i\phi}U \in SU(2),
+$$
+then the SU(2) matrix is converted to the quaternion components above.
+Because $U(2)\simeq (U(1)\times SU(2))/\mathbb{Z}_2$, this split is a
+coordinate convention with the usual sign/phase identification; the code fixes
+a representative by wrapping the phase and normalizing the quaternion.
+
 ### Update rule
 
 $$
@@ -118,16 +169,116 @@ Thus Jacobian derivatives only arise from loop features.
 
 ### Gauge-covariance issue in the old U(2) base implementation
 
-The old `src/nthmc/u2/field_transform.py` implementation used
-`loop_sin_cos_features`, including both trace-like scalar channels and
-traceless color-vector channels, as ordinary CNN inputs. It also lets the CNN
-output independent coefficients for phase and traceless algebra directions.
+For a U(2) loop matrix $C$, the code uses the same split representation:
+$$
+C=e^{i\phi}q,
+\qquad
+q=q_0I+i\sum_{a=1}^3 q_a\sigma_a .
+$$
+
+Expanding the complex matrix gives
+$$
+C
+=
+q_0\cos\phi\, I
++
+q_0\sin\phi\, iI
++
+\sum_a q_a\cos\phi\, i\sigma_a
+-
+\sum_a q_a\sin\phi\, \sigma_a .
+$$
+
+The function `loop_sin_cos_features(C)` stores these components as 8 real
+channels:
+$$
+\mathrm{sin\_like}(C)
+=
+\left(
+q_0\sin\phi,\ q_1\cos\phi,\ q_2\cos\phi,\ q_3\cos\phi
+\right),
+$$
+$$
+\mathrm{cos\_like}(C)
+=
+\left(
+q_0\cos\phi,\ -q_1\sin\phi,\ -q_2\sin\phi,\ -q_3\sin\phi
+\right).
+$$
+
+So the feature layout is:
+
+- channel 0: central $iI$ sin-like scalar, $q_0\sin\phi$
+- channels 1:4: traceless $i\sigma_a$ sin-like color vector,
+  $q_a\cos\phi$
+- channel 4: central $I$ cos-like scalar, $q_0\cos\phi$
+- channels 5:8: traceless $\sigma_a$ cos-like color vector,
+  $-q_a\sin\phi$
+
+The old base implementation had two distinct objects:
+
+1. **CNN input features.** For each loop $l$, the input was the feature vector
+   $$
+   f_l(C_l)
+   =
+   \left(
+   q_0\sin\phi,\ q_1\cos\phi,\ q_2\cos\phi,\ q_3\cos\phi,\ 
+   q_0\cos\phi,\ -q_1\sin\phi,\ -q_2\sin\phi,\ -q_3\sin\phi
+   \right)_l .
+   $$
+   These are the values returned by `loop_sin_cos_features`. In the old
+   implementation, all eight components were treated as ordinary scalar CNN
+   input channels.
+
+2. **CNN output coefficients.** The CNN output did not directly output
+   $\Delta$. It output local coefficients for the field transform. In the full
+   field-transform layout, each loop $l$ had four coefficient slots:
+   $$
+   k_l=(k_{l,0},k_{l,1},k_{l,2},k_{l,3}).
+   $$
+   For the four plaquette loops this gives 16 output channels; for the eight
+   rectangle loops this gives 32 output channels.
+
+The `_loop_delta` code then combined the CNN input features $f_l$ and CNN
+output coefficients $k_l$ to build the algebra update. For one loop $l$, with
+orientation sign $s_l=\pm1$, the contribution had the structure
+$$
+\Delta_{\phi,l}
+=
+k_{l,0}\,s_l\,q_0\sin\phi
++
+k_{l,2}\,q_0\cos\phi,
+$$
+$$
+\Delta_{a,l}
+=
+k_{l,1}\,s_l\,q_a\cos\phi
+-
+k_{l,3}\,q_a\sin\phi,
+\qquad a=1,2,3.
+$$
+
+Here $k_{l,r}$ is a CNN output coefficient, while the $q_0\sin\phi$,
+$q_a\cos\phi$, $q_0\cos\phi$, and $-q_a\sin\phi$ factors are loop features
+computed from the gauge field.
+
+Thus the old transform used both central U(1)-like loop scalars and
+traceless SU(2)-like color-vector loop structures to build
+$$
+\Delta_l
+=
+(\Delta_{\phi,l},\Delta_{1,l},\Delta_{2,l},\Delta_{3,l})
+\in u(1)\oplus su(2).
+$$
 
 This is sufficient for the local Jacobian analysis below, but it does **not**
-guarantee U(2) gauge covariance. The issue is that traceless color-vector
-features transform by local adjoint rotations, while the CNN treats channel
-components as fixed scalar channels. Therefore the old base transform could
-learn gauge-frame-dependent updates.
+guarantee U(2) gauge covariance. The central scalar pieces
+$q_0\sin\phi$ and $q_0\cos\phi$ are trace-like gauge-invariant loop scalars.
+The vectors $(q_1,q_2,q_3)$ are different: for a closed loop based at a site,
+they transform by a local adjoint SO(3) color rotation under gauge
+transformations. The old CNN treated those vector components as fixed scalar
+channels, so its coefficients could depend on the arbitrary local color frame.
+Therefore the old base transform could learn gauge-frame-dependent updates.
 
 This is the main structural difference from U(1). In U(1), the corresponding
 loop angles are gauge-invariant scalars because the group is Abelian.
@@ -215,6 +366,72 @@ similar settings. In U(1), loop features are Abelian scalar angles. In U(2),
 untransported traceless loop components carry local color-frame information,
 so treating them as ordinary scalar CNN channels can break the symmetry that
 the HMC target distribution has.
+
+---
+
+### Topological charge definitions
+
+The current 2du1 implementation uses the compact U(1) plaquette angle
+$$
+\theta_p(x)
+=
+\mathrm{wrap}_{[-\pi,\pi)}
+\left[
+\theta_{x,0}
+-
+\theta_{x,1}
+-
+\theta_{x+\hat 1,0}
++
+\theta_{x+\hat 0,1}
+\right],
+$$
+and records the integer-valued topological charge
+$$
+Q_{\mathrm{2du1}}
+=
+\left\lfloor
+0.1
++
+\frac{1}{2\pi}\sum_x \theta_p(x)
+\right\rfloor .
+$$
+
+The current 2du2 implementation forms the U(2) plaquette matrix in the same
+lattice orientation,
+$$
+P_{x,01}
+=
+U_{x,0}
+U_{x,1}^\dagger
+U_{x+\hat 1,0}^\dagger
+U_{x+\hat 0,1},
+$$
+then uses the determinant phase:
+$$
+\alpha_p(x)
+=
+\mathrm{wrap}_{[-\pi,\pi)}
+\left[
+\arg\det P_{x,01}
+\right].
+$$
+
+In the split U(2) representation used by the code, $U=e^{i\phi}q$ with
+$q\in SU(2)$, so $\arg\det P_{x,01}=2\phi_p(x)$. Therefore the recorded
+topological charge is
+$$
+Q_{\mathrm{2du2}}
+=
+\left\lfloor
+0.1
++
+\frac{1}{2\pi}\sum_x \alpha_p(x)
+\right\rfloor .
+$$
+
+The small $0.1$ offset is part of the current implementation's integer
+rounding convention.
 
 ---
 
