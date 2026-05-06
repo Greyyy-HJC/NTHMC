@@ -167,6 +167,82 @@ Thus the extra factor `plaquettes[..., 1]` is not an additional ad hoc
 interaction. It is the SU(2) trace contribution required by the U(2) Wilson
 action in the split $U(1)\times SU(2)$ coordinate convention.
 
+### U(1) and U(2) beta normalization
+
+The numerical value of $\beta$ in the U(1) action and the U(2) action should
+not be compared as the same effective coupling. The U(1) plaquette angle
+appears as
+$$
+S_{U(1)}
+=
+\beta_{U(1)}\sum_x\left[1-\cos\theta_p(x)\right].
+$$
+For small plaquette angles,
+$$
+1-\cos\theta_p
+=
+\frac{1}{2}\theta_p^2+O(\theta_p^4),
+$$
+so the quadratic U(1) action is
+$$
+S_{U(1)}
+\simeq
+\frac{\beta_{U(1)}}{2}\sum_x\theta_p(x)^2.
+$$
+
+For U(2), write the plaquette as
+$$
+P_x=e^{i\phi_p(x)}q_p(x),
+\qquad
+q_p=\exp_{SU(2)}(i a_p^b\sigma_b).
+$$
+The determinant phase used by the U(2) topological charge is
+$$
+\alpha_p(x)=\arg\det P_x=2\phi_p(x),
+$$
+because $\det q_p=1$. For topological-freezing comparisons, $\alpha_p$ is the
+U(2) variable to align with the U(1) plaquette angle $\theta_p$, because both
+topological charges are built from the wrapped compact phase summed over
+plaquettes. Expanding the normalized trace near the identity gives
+$$
+1-\frac{1}{2}\mathrm{ReTr}\,P_x
+=
+1-q_{0,p}\cos\phi_p
+\simeq
+\frac{1}{2}\phi_p^2
++
+\frac{1}{2}|a_p|^2.
+$$
+The part controlling the determinant U(1) phase is therefore
+$$
+\frac{\beta_{U(2)}}{2}\phi_p^2
+=
+\frac{\beta_{U(2)}}{8}\alpha_p^2.
+$$
+Matching this quadratic coefficient to the U(1) action
+$\frac{\beta_{U(1)}}{2}\theta_p^2$ with $\theta_p$ identified with the
+determinant phase $\alpha_p$ gives the rough determinant-sector relation
+$$
+\frac{\beta_{U(2)}}{8}
+\approx
+\frac{\beta_{U(1)}}{2},
+\qquad\text{or}\qquad
+\beta_{U(2)}
+\approx
+4\beta_{U(1)}.
+$$
+
+This is only a normalization guide, not an exact equality of the two theories.
+The U(2) theory also has the three traceless SU(2) plaquette directions, and
+topological freezing depends on the full dynamics and the chosen HMC
+integrator. Still, for determinant-topology comparisons, a U(2) run at
+$\beta_{U(2)}$ is more naturally compared to a U(1) run at the effective value
+$$
+\beta_{\mathrm{det,eff}}
+\equiv
+\frac{\beta_{U(2)}}{4}.
+$$
+
 
 ---
 

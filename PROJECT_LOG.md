@@ -9,6 +9,7 @@ This is an append-only development history for NTHMC.
 - Added the gauge-covariance derivation showing why non-Abelian loop stacks used in `Delta_{x,mu}` must be based at the active link's starting site.
 - Clarified that the U(2) CNN coefficient inputs use invariant plaquette/rectangle tensors, while the `Delta` update uses a separate active-site based attached loop stack.
 - Cleared stale 2du2 generated gauge configs, model checkpoints, CSV diagnostics, and plots that must be regenerated after the U(2) gauge-convention and field-transform changes.
+- Added a U(1)-to-U(2) beta-normalization derivation showing the determinant-sector estimate `beta_U2 ~= 4 beta_U1` and why the U(2) determinant phase aligns with the U(1) plaquette angle for topology comparisons.
 - Filled in the U(1) field-transform documentation with 8-subset updates, CNN input/output channels, phase-shift formulas, and the code-matched Jacobian cos/sin terms.
 - Reworked the U(2) gauge-invariant CNN input discussion in `presentation/Field_transform.md` to express `ReTr C`, `ImTr C`, `det C`, and `Tr C^n` in split phase-quaternion variables.
 - Expanded the gauge-covariance explanation in `presentation/Field_transform.md` to contrast Abelian U(1) scalar loop features with non-Abelian U(2) traceless color components.
