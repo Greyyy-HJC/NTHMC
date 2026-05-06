@@ -1,4 +1,4 @@
-# Detailed Comparison: 2D U(1) vs 2D U(2) Field Transformations
+# Details of Field Transformation: 2D U(1) vs 2D U(2)
 
 This note documents the field transformations implemented in:
 
@@ -7,82 +7,9 @@ This note documents the field transformations implemented in:
 - `src/nthmc/u1/models.py`
 - `src/nthmc/u2/models.py`
 
-The key structural distinction is:
-
-- U(1): scalar active-link Jacobian factor.
-- U(2): local $4\times 4$ active-link Jacobian block.
-
 ---
 
-## 1. Core Principle: Gauge Covariance
-
-Gauge transformation in the convention used by the current U(2) code:
-$$
-U_{x,\mu} \rightarrow G_{x+\hat\mu} U_{x,\mu} G_x^\dagger .
-$$
-
-A field transformation $F$ satisfies:
-$$
-F(U^G) = F(U)^G .
-$$
-
-Transformations are built from local Wilson loops:
-
-- plaquettes
-- $1\times2$, $2\times1$ rectangles
-
-For non-Abelian groups, this statement is not enough by itself. A closed
-loop matrix based at site $x$ transforms by conjugation:
-$$
-C_x \rightarrow G_x C_x G_x^\dagger ,
-$$
-so its trace-like scalar features are gauge invariant, but its traceless
-color components are only gauge covariant in the color frame at the loop
-base point. Ordinary CNN channels are scalar channels; feeding untransported
-traceless color components to an ordinary CNN does not, by itself, preserve
-gauge covariance.
-
-Links are split into 8 checkerboard subsets:
-$$
-(\mu,\ x\bmod 2,\ y\bmod 2).
-$$
-
-Each layer updates one subset. Active links in the same subset are independent within that layer.
-
----
-
-## 2. U(1) Field Transformation
-
-### Update rule
-
-$$
-\theta' = \theta + \Delta\theta(\theta)
-$$
-
-Each active link is updated independently.
-
-### Jacobian
-
-$$
-J = 1 + \frac{\partial \Delta\theta}{\partial\theta}
-$$
-
-If
-$$
-\left|\frac{\partial \Delta\theta}{\partial\theta}\right| < 1
-$$
-then
-$$
-J > 0
-$$
-
-Thus each layer is strictly monotone and invertible.
-
----
-
-## 3. U(2) Field Transformation
-
-### Representation
+## Representation of U(2)
 
 $$
 U = (\phi, q), \quad q \in SU(2)
@@ -138,6 +65,459 @@ then the SU(2) matrix is converted to the quaternion components above.
 Because $U(2)\simeq (U(1)\times SU(2))/\mathbb{Z}_2$, this split is a
 coordinate convention with the usual sign/phase identification; the code fixes
 a representative by wrapping the phase and normalizing the quaternion.
+
+
+---
+
+## Wilson Actions Implemented In Code
+
+The current U(1) HMC code stores each link as one compact angle
+$\theta_{x,\mu}$. The plaquette angle implemented by
+`src/nthmc/u1/u1_observables.py::plaq_from_field` is
+$$
+\theta_p(x)
+=
+\theta_{x,0}
+-
+\theta_{x,1}
+-
+\theta_{x+\hat 1,0}
++
+\theta_{x+\hat 0,1}.
+$$
+
+The action used by `src/nthmc/u1/u1_hmc.py::HMCU1.action` is
+$$
+S_{U(1)}(\theta)
+=
+-\beta\sum_x \cos\theta_p(x).
+$$
+
+This is equivalent for HMC dynamics to the usual Wilson form
+$$
+S_{U(1)}(\theta)
+=
+\beta\sum_x\left[1-\cos\theta_p(x)\right],
+$$
+because the two differ only by the constant $\beta V$.
+
+The current U(2) code stores each link in the split representation
+$$
+U_{x,\mu}=e^{i\phi_{x,\mu}}q_{x,\mu},
+\qquad
+q_{x,\mu}\in SU(2),
+$$
+where $q=(q_0,q_1,q_2,q_3)$ is a unit quaternion. The plaquette matrix
+implemented by `src/nthmc/u2/u2_observables.py::plaquette_from_field_batch`
+has the same lattice orientation as the U(1) plaquette:
+$$
+P_{x,01}
+=
+U_{x,0}
+U_{x,1}^\dagger
+U_{x+\hat 1,0}^\dagger
+U_{x+\hat 0,1}.
+$$
+
+In split form, the plaquette is stored as
+$$
+P_{x,01}=e^{i\phi_p(x)}q_p(x),
+\qquad
+q_p=(q_{0,p},q_{1,p},q_{2,p},q_{3,p}).
+$$
+
+The normalized plaquette used by
+`src/nthmc/u2/u2_observables.py::plaquette_mean_from_field_batch` is
+$$
+\frac{1}{2}\mathrm{ReTr}\,P_{x,01}
+=
+q_{0,p}(x)\cos\phi_p(x).
+$$
+
+This is exactly the code expression
+```python
+torch.cos(plaquettes[..., 0]) * plaquettes[..., 1]
+```
+because `plaquettes[..., 0]` is the U(1) phase $\phi_p$ and
+`plaquettes[..., 1]` is the scalar quaternion component $q_{0,p}$.
+
+Therefore `src/nthmc/u2/u2_observables.py::action_from_field_batch` computes
+$$
+S_{U(2)}(U)
+=
+\beta V
+\left[
+1
+-
+\frac{1}{V}\sum_x
+q_{0,p}(x)\cos\phi_p(x)
+\right],
+$$
+or equivalently
+$$
+S_{U(2)}(U)
+=
+\beta\sum_x
+\left[
+1-\frac{1}{2}\mathrm{ReTr}\,P_{x,01}
+\right].
+$$
+
+Thus the extra factor `plaquettes[..., 1]` is not an additional ad hoc
+interaction. It is the SU(2) trace contribution required by the U(2) Wilson
+action in the split $U(1)\times SU(2)$ coordinate convention.
+
+
+---
+
+## Topological charge definitions
+
+The current 2du1 implementation uses the compact U(1) plaquette angle
+$$
+\theta_p(x)
+=
+\mathrm{wrap}_{[-\pi,\pi)}
+\left[
+\theta_{x,0}
+-
+\theta_{x,1}
+-
+\theta_{x+\hat 1,0}
++
+\theta_{x+\hat 0,1}
+\right],
+$$
+and records the integer-valued topological charge
+$$
+Q_{\mathrm{2du1}}
+=
+\left\lfloor
+0.1
++
+\frac{1}{2\pi}\sum_x \theta_p(x)
+\right\rfloor .
+$$
+
+The current 2du2 implementation forms the U(2) plaquette matrix in the same
+lattice orientation,
+$$
+P_{x,01}
+=
+U_{x,0}
+U_{x,1}^\dagger
+U_{x+\hat 1,0}^\dagger
+U_{x+\hat 0,1},
+$$
+then uses the determinant phase:
+$$
+\alpha_p(x)
+=
+\mathrm{wrap}_{[-\pi,\pi)}
+\left[
+\arg\det P_{x,01}
+\right].
+$$
+
+In the split U(2) representation used by the code, $U=e^{i\phi}q$ with
+$q\in SU(2)$, so $\arg\det P_{x,01}=2\phi_p(x)$. Therefore the recorded
+topological charge is
+$$
+Q_{\mathrm{2du2}}
+=
+\left\lfloor
+0.1
++
+\frac{1}{2\pi}\sum_x \alpha_p(x)
+\right\rfloor .
+$$
+
+The small $0.1$ offset is part of the current implementation's integer
+rounding convention.
+
+
+---
+
+## Gauge Covariance of Field Transformation
+
+Gauge transformation:
+$$
+U_{x,\mu} \rightarrow U^G_{x,\mu} \equiv G_{x+\hat\mu} U_{x,\mu} G_x^\dagger .
+$$
+
+A gauge-covariant field transformation $F$ should satisfy:
+$$
+F(U^G) = F(U)^G .
+$$
+
+For Abelian groups like U(1), this requirement is straightforward to preserve
+with ordinary scalar loop features. A closed U(1) Wilson loop is a phase
+$C_x=e^{i\theta_x}$, and because all group elements commute, the gauge
+factors cancel around the loop. Therefore the loop angle $\theta_x$, and
+features such as $\sin\theta_x$ and $\cos\theta_x$, are gauge-invariant
+scalars. Feeding these scalar channels to an ordinary CNN does not introduce
+a local gauge-frame dependence.
+
+For non-Abelian groups, this statement is not enough by itself. A closed
+loop matrix based at site $x$ transforms by conjugation:
+$$
+C_x \rightarrow G_x C_x G_x^\dagger ,
+$$
+so its trace-like scalar features are gauge invariant, but its traceless
+color components are only gauge covariant in the color frame at the loop base
+point. In the split U(2) representation, this is the distinction between
+trace-like quantities such as $q_0\cos\phi$ and $q_0\sin\phi$, which are
+scalars, and traceless color-vector quantities such as $(q_1,q_2,q_3)$, which
+rotate under the local adjoint action of $G_x$.
+
+Therefore, gauge-invariant inputs in U(2) for the CNN should be built from
+closed-loop matrix invariants. For a closed loop
+$$
+C=e^{i\phi}q,
+\qquad
+q=q_0I+i\sum_{a=1}^3q_a\sigma_a\in SU(2),
+$$
+use scalar quantities such as
+$$
+\mathrm{ReTr}\,C=2q_0\cos\phi,
+\qquad
+\mathrm{ImTr}\,C=2q_0\sin\phi.
+$$
+
+The determinant is also gauge invariant:
+$$
+\det C=e^{2i\phi},
+\qquad
+\mathrm{Re}\det C=\cos(2\phi),
+\qquad
+\mathrm{Im}\det C=\sin(2\phi).
+$$
+
+More generally,
+$$
+\mathrm{Tr}\,C^n
+=
+2e^{in\phi}T_n(q_0),
+$$
+where $T_n$ is the Chebyshev polynomial defined by
+$T_n(\cos\alpha)=\cos(n\alpha)$. Equivalently,
+$$
+\mathrm{ReTr}\,C^n
+=
+2T_n(q_0)\cos(n\phi),
+\qquad
+\mathrm{ImTr}\,C^n
+=
+2T_n(q_0)\sin(n\phi).
+$$
+For example,
+$$
+\mathrm{Tr}\,C^2=2e^{2i\phi}(2q_0^2-1),
+\qquad
+\mathrm{Tr}\,C^3=2e^{3i\phi}(4q_0^3-3q_0).
+$$
+
+### Why broken gauge symmetry can damage training
+
+The target Wilson action is gauge invariant, so it is constant along each
+gauge orbit. A gauge-covariant field transform preserves this structure: the
+transformed potential
+$$
+S(F(U))-\log|\det J(U)|
+$$
+is also gauge invariant.
+
+If the learned transform is not gauge covariant, the transformed potential can
+vary along pure-gauge directions. This creates several training problems:
+
+- The force loss can reward cancellation patterns that depend on an arbitrary
+  gauge frame rather than on physical gauge-invariant structure.
+- The Jacobian force can acquire components along gauge-orbit directions even
+  though the target action has no physical restoring force there.
+- Gauge-equivalent configurations can produce different CNN coefficients,
+  making the loss noisier and harder to optimize.
+- The network can reduce the local training objective by creating gauge-frame
+  dependent Jacobian structure, but this need not improve FT-HMC acceptance
+  because the proposal then sees artificial gauge-orbit roughness.
+
+This explains why the U(2) loss can behave differently from U(1) under
+similar settings. In U(1), loop features are Abelian scalar angles. In U(2),
+untransported traceless loop components carry local color-frame information,
+so treating them as ordinary scalar CNN channels can break the symmetry that
+the HMC target distribution has.
+
+
+---
+
+## U(1) Field Transformation
+
+### Update rule
+
+The U(1) field transform uses the same 8 checkerboard subsets as the HMC
+masking code:
+$$
+s=(\mu,\ x\bmod 2,\ y\bmod 2),
+\qquad
+\mu\in\{0,1\}.
+$$
+
+One subset is updated at a time. For subset $s$, only the active links selected
+by `get_field_mask(s, ...)` are changed:
+$$
+\theta^{(s+1)}_{x,\mu}
+=
+\theta^{(s)}_{x,\mu}
++
+M^{(s)}_{x,\mu}\Delta\theta^{(s)}_{x,\mu}(\theta^{(s)}),
+$$
+where $M^{(s)}_{x,\mu}\in\{0,1\}$ is the active-link mask. The full transform
+is the composition of the 8 subset maps:
+$$
+F = F_7\circ F_6\circ\cdots\circ F_0.
+$$
+
+Within one subset, active links are independent because the CNN coefficients
+are computed from the masked loop features before the active links are
+updated.
+
+### Input & Output of CNN
+
+For each subset, the current U(1) code first computes the plaquette angles
+$p_x$ and the two rectangle-angle fields $r^{(0)}_x,r^{(1)}_x$:
+$$
+\mathrm{plaq}=\texttt{plaq\_from\_field\_batch}(\theta),
+\qquad
+\mathrm{rect}=\texttt{rect\_from\_field\_batch}(\theta).
+$$
+
+The model input is built in `compute_k0_k1` from masked loop features:
+$$
+\texttt{plaq\_features}
+=
+(\sin p,\cos p),
+\qquad
+\texttt{rect\_features}
+=
+(\sin r^{(0)},\sin r^{(1)},\cos r^{(0)},\cos r^{(1)}).
+$$
+
+Thus the plaquette CNN input has 2 channels and the rectangle CNN input has 4
+channels. The model returns
+$$
+k^{(p)}\in\mathbb{R}^{8},
+\qquad
+k^{(r)}\in\mathbb{R}^{16}
+$$
+per lattice site. The channel layout is:
+
+- plaquette: 4 sin coefficients followed by 4 cos coefficients.
+- rectangle: 8 sin coefficients followed by 8 cos coefficients.
+
+In the current `addcos` model, these are bounded as
+$$
+|k^{(p)}|<\frac{1}{5},
+\qquad
+|k^{(r)}|<\frac{1}{40}.
+$$
+
+The older `base` model has the same output layout, but sets the cos
+coefficient channels to zero.
+
+### Transformation
+
+For one active link $\ell=(x,\mu)$, the code stacks the loop angles touching
+that link:
+
+- two plaquette angles for each link direction, selected from the 4-channel
+  `plaq_angles` stack.
+- four rectangle angles for each link direction, selected from the 8-channel
+  `rect_angles` stack.
+
+Let these relevant loop angles be $a_l$, with orientation signs
+$\sigma_l=\pm1$ matching `_plaq_phase_shift` and `_rect_phase_shift`. The
+code uses
+$$
+\sigma^{(p)}=(-1,+1,+1,-1),
+\qquad
+\sigma^{(r)}=(-1,+1,-1,+1,+1,-1,+1,-1).
+$$
+For each active link direction, the update uses the relevant two plaquette
+entries and four rectangle entries from these stacks. The
+implemented phase update has the form
+$$
+\Delta\theta_\ell
+=
+\sum_{l\in P(\ell)}
+\sigma_l
+\left[
+k^{(p,\sin)}_l\sin a_l
+-
+k^{(p,\cos)}_l\cos a_l
+\right]
++
+\sum_{l\in R(\ell)}
+\sigma_l
+\left[
+k^{(r,\sin)}_l\sin a_l
+-
+k^{(r,\cos)}_l\cos a_l
+\right].
+$$
+
+This is the formula implemented by `_plaq_phase_shift` and
+`_rect_phase_shift`. The sin coefficient channels multiply signed
+$\sin(\text{loop angle})$ terms, and the cos coefficient channels multiply the
+oppositely signed $\cos(\text{loop angle})$ terms.
+
+For the local Jacobian, the coefficients are treated as independent of the
+active link within the current subset. Since the loop-angle orientation in the
+code gives
+$$
+\frac{\partial a_l}{\partial\theta_\ell}=-\sigma_l,
+$$
+the active-link scalar Jacobian is
+$$
+J_\ell
+=
+\frac{\partial\theta'_\ell}{\partial\theta_\ell}
+=
+1
+-
+\sum_{l\in P(\ell)}
+\left[
+k^{(p,\sin)}_l\cos a_l
++
+k^{(p,\cos)}_l\sin a_l
+\right]
+-
+\sum_{l\in R(\ell)}
+\left[
+k^{(r,\sin)}_l\cos a_l
++
+k^{(r,\cos)}_l\sin a_l
+\right].
+$$
+
+This matches `_plaq_jac_shift` and `_rect_jac_shift`, where the Jacobian shift
+is built from the `[-cos(loop), -sin(loop)]` stack. In the older `base` model,
+the cos coefficient channels are zero, so the Jacobian shift reduces to the
+terms proportional to $-\ k_l\cos a_l$.
+
+The subset log determinant is therefore
+$$
+\log|\det J_s|
+=
+\sum_{\ell\in s}\log J_\ell,
+$$
+which is the `torch.log(1 + plaq_jac_shift + rect_jac_shift)` expression in
+`compute_jac_logdet`.
+
+
+---
+
+## 4. U(2) Field Transformation
+
+### Representation
+
 
 ### Update rule
 
@@ -338,104 +718,11 @@ F(U^G)=F(U)^G,
 \log|\det J(U^G)|=\log|\det J(U)|.
 $$
 
-### Why broken gauge symmetry can damage training
 
-The target Wilson action is gauge invariant, so it is constant along each
-gauge orbit. A gauge-covariant field transform preserves this structure: the
-transformed potential
-$$
-S(F(U))-\log|\det J(U)|
-$$
-is also gauge invariant.
-
-If the learned transform is not gauge covariant, the transformed potential can
-vary along pure-gauge directions. This creates several training problems:
-
-- The force loss can reward cancellation patterns that depend on an arbitrary
-  gauge frame rather than on physical gauge-invariant structure.
-- The Jacobian force can acquire components along gauge-orbit directions even
-  though the target action has no physical restoring force there.
-- Gauge-equivalent configurations can produce different CNN coefficients,
-  making the loss noisier and harder to optimize.
-- The network can reduce the local training objective by creating gauge-frame
-  dependent Jacobian structure, but this need not improve FT-HMC acceptance
-  because the proposal then sees artificial gauge-orbit roughness.
-
-This explains why the U(2) loss can behave differently from U(1) under
-similar settings. In U(1), loop features are Abelian scalar angles. In U(2),
-untransported traceless loop components carry local color-frame information,
-so treating them as ordinary scalar CNN channels can break the symmetry that
-the HMC target distribution has.
 
 ---
 
-### Topological charge definitions
-
-The current 2du1 implementation uses the compact U(1) plaquette angle
-$$
-\theta_p(x)
-=
-\mathrm{wrap}_{[-\pi,\pi)}
-\left[
-\theta_{x,0}
--
-\theta_{x,1}
--
-\theta_{x+\hat 1,0}
-+
-\theta_{x+\hat 0,1}
-\right],
-$$
-and records the integer-valued topological charge
-$$
-Q_{\mathrm{2du1}}
-=
-\left\lfloor
-0.1
-+
-\frac{1}{2\pi}\sum_x \theta_p(x)
-\right\rfloor .
-$$
-
-The current 2du2 implementation forms the U(2) plaquette matrix in the same
-lattice orientation,
-$$
-P_{x,01}
-=
-U_{x,0}
-U_{x,1}^\dagger
-U_{x+\hat 1,0}^\dagger
-U_{x+\hat 0,1},
-$$
-then uses the determinant phase:
-$$
-\alpha_p(x)
-=
-\mathrm{wrap}_{[-\pi,\pi)}
-\left[
-\arg\det P_{x,01}
-\right].
-$$
-
-In the split U(2) representation used by the code, $U=e^{i\phi}q$ with
-$q\in SU(2)$, so $\arg\det P_{x,01}=2\phi_p(x)$. Therefore the recorded
-topological charge is
-$$
-Q_{\mathrm{2du2}}
-=
-\left\lfloor
-0.1
-+
-\frac{1}{2\pi}\sum_x \alpha_p(x)
-\right\rfloor .
-$$
-
-The small $0.1$ offset is part of the current implementation's integer
-rounding convention.
-
----
-
-## 4. U(2) Jacobian Structure
+## 5. U(2) Jacobian Structure
 
 Introduce tangent perturbation:
 $$
@@ -456,7 +743,7 @@ Each active link contributes a $4\times4$ real matrix.
 
 ---
 
-## 5. Decomposition of the Jacobian
+## 6. Decomposition of the Jacobian
 
 $$
 J = Q + E
@@ -489,7 +776,7 @@ In the chosen orthonormal basis of $u(2)=u(1)\oplus su(2)$:
 
 ---
 
-## 6. Invertibility Condition
+## 7. Invertibility Condition
 
 We write:
 $$
@@ -518,7 +805,7 @@ $$
 
 ---
 
-## 7. Current U(2) Base Caps
+## 8. Current U(2) Base Caps
 
 The current U(2) `base` model returns:
 $$
@@ -572,7 +859,7 @@ Numerically, the margin is small when `tanh` saturates close to 1, but the mathe
 
 ---
 
-## 8. Determinant Sign
+## 9. Determinant Sign
 
 Define:
 $$
@@ -599,7 +886,7 @@ $$
 
 ---
 
-## 9. Gauge-Covariant U(2) Design
+## 10. Gauge-Covariant U(2) Design
 
 A gauge-covariant U(2) field transform should separate scalar neural-network
 data from color-covariant algebra data.
@@ -680,7 +967,7 @@ $$
 
 ---
 
-## 10. Global Invertibility
+## 11. Global Invertibility
 
 Each layer updates disjoint subsets → block factorization:
 
@@ -725,7 +1012,7 @@ Composition of globally invertible subset layers gives a globally invertible fie
 
 ---
 
-## 11. Final Conclusions
+## 12. Final Conclusions
 
 ### U(1)
 
@@ -758,7 +1045,7 @@ link start point.
 
 ---
 
-## 12. Summary
+## 13. Summary
 
 | Property | U(1) | U(2) |
 |---|---|---|

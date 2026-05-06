@@ -4,6 +4,10 @@ This is an append-only development history for NTHMC.
 
 ## 2026-05-06
 
+- Filled in the U(1) field-transform documentation with 8-subset updates, CNN input/output channels, phase-shift formulas, and the code-matched Jacobian cos/sin terms.
+- Reworked the U(2) gauge-invariant CNN input discussion in `presentation/Field_transform.md` to express `ReTr C`, `ImTr C`, `det C`, and `Tr C^n` in split phase-quaternion variables.
+- Expanded the gauge-covariance explanation in `presentation/Field_transform.md` to contrast Abelian U(1) scalar loop features with non-Abelian U(2) traceless color components.
+- Added the code-matched U(1) and U(2) Wilson action comparison to `presentation/Field_transform.md`, including the split U(2) plaquette trace factor.
 - Added the current 2du1 and 2du2 topological-charge definitions to `presentation/Field_transform.md`.
 - Documented the current 2du2 split U(2) representation as a central U(1) phase plus SU(2) quaternion, matching the code's group operations and algebra layout.
 - Expanded the old U(2) base gauge-covariance discussion with the explicit `loop_sin_cos_features` channel structure and how the full field-transform layout used central and traceless loop components.

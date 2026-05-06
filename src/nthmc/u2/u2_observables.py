@@ -94,7 +94,7 @@ def u2_exp(algebra: torch.Tensor) -> torch.Tensor:
         raise ValueError("U(2) algebra tensors must have four coefficients in the last dimension")
 
     phase = regularize_phase(algebra[..., :1])
-    quaternion = su2_exp(algebra[..., 1:])
+    quaternion = su2_exp(algebra[..., 1:]) # real numbers (q0, q1, q2, q3)
     return torch.cat([phase, quaternion], dim=-1)
 
 
@@ -188,8 +188,8 @@ def loop_sin_cos_features(loops: torch.Tensor) -> torch.Tensor:
     """Return sin-like and cos-like trace/traceless algebra coefficients for U(2) loops."""
     loops = u2_normalize(loops)
     phase = loops[..., :1]
-    q0 = loops[..., 1:2]
-    qv = loops[..., 2:]
+    q0 = loops[..., 1:2] # real number
+    qv = loops[..., 2:] # real numbers
     sin_like = torch.cat([q0 * torch.sin(phase), qv * torch.cos(phase)], dim=-1)
     cos_like = torch.cat([q0 * torch.cos(phase), -qv * torch.sin(phase)], dim=-1)
     return torch.cat([sin_like, cos_like], dim=-1)
