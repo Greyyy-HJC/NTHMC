@@ -189,8 +189,23 @@ class FieldTransformation:
 
     def _scalar_loop_features(self, loops: torch.Tensor) -> torch.Tensor:
         """Return compact gauge-invariant scalar loop features."""
-        features = loop_sin_cos_features(loops)
-        return features[..., [0, 4]]
+        loops = u2_normalize(loops)
+        phase = loops[..., :1]
+        q0 = loops[..., 1:2]
+        cos_phase = torch.cos(phase)
+        sin_phase = torch.sin(phase)
+        trace_sq_factor = 2 * (2 * q0**2 - 1)
+        return torch.cat(
+            [
+                q0 * cos_phase,
+                q0 * sin_phase,
+                cos_phase,
+                sin_phase,
+                trace_sq_factor * torch.cos(2 * phase),
+                trace_sq_factor * torch.sin(2 * phase),
+            ],
+            dim=-1,
+        )
 
     def _phase_only_coeffs(self, coeffs: torch.Tensor, n_loops: int) -> torch.Tensor:
         """Keep only phase-update coefficient slots while preserving tensor shape."""
@@ -201,7 +216,7 @@ class FieldTransformation:
         coeffs_by_loop = coeffs_by_loop * phase_mask.view(1, 1, 4, 1, 1)
         return coeffs_by_loop.reshape_as(coeffs)
 
-    def compute_k0_k1(
+    def compute_coefficients(
         self,
         links: torch.Tensor,
         index: int,
@@ -215,15 +230,15 @@ class FieldTransformation:
 
         plaq_features = self._scalar_loop_features(self._masked_loops(plaq, plaq_mask)).permute(0, 3, 1, 2)
         rect_features = self._scalar_loop_features(self._masked_loops(rect, rect_mask))
-        rect_features = rect_features.permute(0, 1, 4, 2, 3).reshape(batch_size, 4, self.lattice_size, self.lattice_size)
+        rect_features = rect_features.permute(0, 1, 4, 2, 3).reshape(batch_size, 12, self.lattice_size, self.lattice_size)
 
         output = self.models[index](plaq_features, rect_features)
         if not isinstance(output, tuple):
             raise ValueError("field_transform expects models to return (plaq_coeffs, rect_coeffs)")
-        k0, k1 = output
-        if k0.shape[1] != 16 or k1.shape[1] != 32:
+        plaq_coeffs, rect_coeffs = output
+        if plaq_coeffs.shape[1] != 16 or rect_coeffs.shape[1] != 32:
             raise ValueError("field_transform expects 16 plaquette and 32 rectangle coefficient channels")
-        return self._phase_only_coeffs(k0, 4), self._phase_only_coeffs(k1, 8)
+        return self._phase_only_coeffs(plaq_coeffs, 4), self._phase_only_coeffs(rect_coeffs, 8)
 
     def _plaq_loop_stack(self, plaq: torch.Tensor) -> torch.Tensor:
         """Stack the four plaquette loops touching each active link."""
@@ -456,8 +471,8 @@ class FieldTransformation:
         index: int,
         plaq: torch.Tensor,
         rect: torch.Tensor,
-        k0: torch.Tensor,
-        k1: torch.Tensor,
+        plaq_coeffs: torch.Tensor,
+        rect_coeffs: torch.Tensor,
         delta: torch.Tensor,
     ) -> torch.Tensor:
         batch_size = links.shape[0]
@@ -471,8 +486,8 @@ class FieldTransformation:
         plaq_loops = self._plaq_loop_stack(plaq)
         rect_loops = self._rect_loop_stack(rect)
 
-        delta_jac = self._plaq_delta_jac(k0, plaq_loops, plaq_tangent)
-        delta_jac = delta_jac + self._rect_delta_jac(k1, rect_loops, rect_tangent)
+        delta_jac = self._plaq_delta_jac(plaq_coeffs, plaq_loops, plaq_tangent)
+        delta_jac = delta_jac + self._rect_delta_jac(rect_coeffs, rect_loops, rect_tangent)
         delta_jac = delta_jac * mask.to(delta_jac.dtype).unsqueeze(-1)
 
         exp_delta = u2_exp(delta)
@@ -484,8 +499,8 @@ class FieldTransformation:
         rect = rectangle_from_field_batch(links)
         plaq_loops = self._plaq_loop_stack(plaq)
         rect_loops = self._rect_loop_stack(rect)
-        k0, k1 = self.compute_k0_k1(links, index, plaq, rect)
-        delta = self._plaq_delta(k0, plaq_loops) + self._rect_delta(k1, rect_loops)
+        plaq_coeffs, rect_coeffs = self.compute_coefficients(links, index, plaq, rect)
+        delta = self._plaq_delta(plaq_coeffs, plaq_loops) + self._rect_delta(rect_coeffs, rect_loops)
         mask = get_link_mask(index, batch_size, self.lattice_size, self.device)
         return delta * mask.to(delta.dtype)
 
@@ -581,12 +596,20 @@ class FieldTransformation:
             rect = rectangle_from_field_batch(links_curr)
             plaq_loops = self._plaq_loop_stack(plaq)
             rect_loops = self._rect_loop_stack(rect)
-            k0, k1 = self.compute_k0_k1(links_curr, index, plaq, rect)
-            delta = self._plaq_delta(k0, plaq_loops) + self._rect_delta(k1, rect_loops)
+            plaq_coeffs, rect_coeffs = self.compute_coefficients(links_curr, index, plaq, rect)
+            delta = self._plaq_delta(plaq_coeffs, plaq_loops) + self._rect_delta(rect_coeffs, rect_loops)
             mask = get_link_mask(index, batch_size, self.lattice_size, self.device)
             delta = delta * mask.to(delta.dtype)
 
-            jacobian_blocks = self._layer_jacobian_blocks(links_curr, index, plaq, rect, k0, k1, delta)
+            jacobian_blocks = self._layer_jacobian_blocks(
+                links_curr,
+                index,
+                plaq,
+                rect,
+                plaq_coeffs,
+                rect_coeffs,
+                delta,
+            )
             active_batches = torch.nonzero(mask.squeeze(-1), as_tuple=False)[:, 0]
             active_blocks = jacobian_blocks[mask.squeeze(-1)]
             _, logabsdet = torch.linalg.slogdet(active_blocks)
@@ -786,21 +809,21 @@ class FieldTransformation:
         return float(stacked.mean().cpu()), float(stacked.max().cpu())
 
     def _coefficient_diagnostics(self, links: torch.Tensor) -> dict[str, float]:
-        k0_abs = []
-        k1_abs = []
+        plaq_coeff_abs = []
+        rect_coeff_abs = []
         links_curr = u2_normalize(links)
         for index in range(self.n_subsets):
             plaq = plaquette_from_field_batch(links_curr)
             rect = rectangle_from_field_batch(links_curr)
             plaq_loops = self._plaq_loop_stack(plaq)
             rect_loops = self._rect_loop_stack(rect)
-            k0, k1 = self.compute_k0_k1(links_curr, index, plaq, rect)
-            k0_abs.append(torch.abs(k0).reshape(k0.shape[0], -1))
-            k1_abs.append(torch.abs(k1).reshape(k1.shape[0], -1))
-            delta = self._plaq_delta(k0, plaq_loops) + self._rect_delta(k1, rect_loops)
+            plaq_coeffs, rect_coeffs = self.compute_coefficients(links_curr, index, plaq, rect)
+            plaq_coeff_abs.append(torch.abs(plaq_coeffs).reshape(plaq_coeffs.shape[0], -1))
+            rect_coeff_abs.append(torch.abs(rect_coeffs).reshape(rect_coeffs.shape[0], -1))
+            delta = self._plaq_delta(plaq_coeffs, plaq_loops) + self._rect_delta(rect_coeffs, rect_loops)
             mask = get_link_mask(index, links.shape[0], self.lattice_size, self.device)
             links_curr = u2_mul(u2_exp(delta * mask.to(delta.dtype)), links_curr)
-        if not k0_abs or not k1_abs:
+        if not plaq_coeff_abs or not rect_coeff_abs:
             return {
                 "k0_abs_mean": 0.0,
                 "k0_abs_max": 0.0,
@@ -809,8 +832,8 @@ class FieldTransformation:
                 "k1_abs_max": 0.0,
                 "k1_sat_frac": 0.0,
             }
-        k0_all = torch.cat(k0_abs, dim=1)
-        k1_all = torch.cat(k1_abs, dim=1)
+        k0_all = torch.cat(plaq_coeff_abs, dim=1)
+        k1_all = torch.cat(rect_coeff_abs, dim=1)
         k0_cap = 1 / 6
         k1_cap = 1 / 45
         return {

@@ -119,6 +119,30 @@ def test_loop_sin_cos_features_have_inverse_loop_orientation() -> None:
     assert torch.allclose(inverse_features[..., 4:], features[..., 4:], atol=1e-5)
 
 
+def test_u2_scalar_loop_features_match_documented_channels() -> None:
+    transform = FieldTransformation.__new__(FieldTransformation)
+    identity_loop = u2_exp(torch.zeros(1, 1, 1, 4))
+
+    features = transform._scalar_loop_features(identity_loop)
+
+    expected = torch.tensor([1.0, 0.0, 1.0, 0.0, 2.0, 0.0]).reshape(1, 1, 1, 6)
+    assert features.shape == (1, 1, 1, 6)
+    assert torch.allclose(features, expected)
+
+
+def test_u2_scalar_loop_features_are_conjugation_invariant() -> None:
+    transform = FieldTransformation.__new__(FieldTransformation)
+    loops = u2_exp(torch.randn(2, 4, 4, 4))
+    omega = u2_exp(torch.randn(2, 4, 4, 4))
+    conjugated = u2_mul(u2_mul(omega, loops), u2_conj(omega))
+
+    assert torch.allclose(
+        transform._scalar_loop_features(conjugated),
+        transform._scalar_loop_features(loops),
+        atol=1e-5,
+    )
+
+
 def test_loop_delta_applies_orientation_only_to_sin_like_terms() -> None:
     transform = FieldTransformation.__new__(FieldTransformation)
     transform.lattice_size = 1
@@ -146,10 +170,10 @@ def test_loop_delta_applies_orientation_only_to_sin_like_terms() -> None:
     assert torch.allclose(cos_delta_flipped, cos_delta, atol=1e-5)
 
 
-def test_u2_base_model_returns_sin_phase_only_full_layout_coefficients() -> None:
+def test_u2_base_model_returns_phase_only_full_layout_coefficients() -> None:
     model = LocalNet()
-    plaq_features = torch.randn(2, 2, 4, 4)
-    rect_features = torch.randn(2, 4, 4, 4)
+    plaq_features = torch.randn(2, 6, 4, 4)
+    rect_features = torch.randn(2, 12, 4, 4)
 
     plaq_coeffs, rect_coeffs = model(plaq_features, rect_features)
     plaq_by_loop = plaq_coeffs.reshape(2, 4, 4, 4, 4)
@@ -158,10 +182,8 @@ def test_u2_base_model_returns_sin_phase_only_full_layout_coefficients() -> None
     assert plaq_coeffs.shape == (2, 16, 4, 4)
     assert rect_coeffs.shape == (2, 32, 4, 4)
     assert torch.allclose(plaq_by_loop[:, :, 1], torch.zeros_like(plaq_by_loop[:, :, 1]))
-    assert torch.allclose(plaq_by_loop[:, :, 2], torch.zeros_like(plaq_by_loop[:, :, 2]))
     assert torch.allclose(plaq_by_loop[:, :, 3], torch.zeros_like(plaq_by_loop[:, :, 3]))
     assert torch.allclose(rect_by_loop[:, :, 1], torch.zeros_like(rect_by_loop[:, :, 1]))
-    assert torch.allclose(rect_by_loop[:, :, 2], torch.zeros_like(rect_by_loop[:, :, 2]))
     assert torch.allclose(rect_by_loop[:, :, 3], torch.zeros_like(rect_by_loop[:, :, 3]))
 
 

@@ -4,6 +4,7 @@ This is an append-only development history for NTHMC.
 
 ## 2026-05-06
 
+- Updated the U(2) field-transform CNN input to use six gauge-invariant scalar features per closed loop, clarified the model coefficient-slot layout, renamed coefficient computation, and kept the current phase-only output slots covered by tests.
 - Filled in the U(1) field-transform documentation with 8-subset updates, CNN input/output channels, phase-shift formulas, and the code-matched Jacobian cos/sin terms.
 - Reworked the U(2) gauge-invariant CNN input discussion in `presentation/Field_transform.md` to express `ReTr C`, `ImTr C`, `det C`, and `Tr C^n` in split phase-quaternion variables.
 - Expanded the gauge-covariance explanation in `presentation/Field_transform.md` to contrast Abelian U(1) scalar loop features with non-Abelian U(2) traceless color components.

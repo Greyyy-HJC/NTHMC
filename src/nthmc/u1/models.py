@@ -55,7 +55,7 @@ class LocalNet(nn.Module):
     def forward(self, plaq_features: torch.Tensor, rect_features: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         x = torch.cat([plaq_features, rect_features], dim=1)
         x = self.activation(self.conv_input(x))
-        x = torch.arctan(self.conv_output(x)) / math.pi / 3
+        x = torch.arctan(self.conv_output(x)) / math.pi / 3 # range [-1/6, 1/6] 
         plaq_sin_coeffs = x[:, : self.config.plaq_output_channels]
         rect_sin_coeffs = x[:, self.config.plaq_output_channels :]
         plaq_coeffs = torch.cat([plaq_sin_coeffs, torch.zeros_like(plaq_sin_coeffs)], dim=1)

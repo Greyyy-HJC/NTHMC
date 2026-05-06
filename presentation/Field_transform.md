@@ -350,39 +350,58 @@ the HMC target distribution has.
 
 ## U(1) Field Transformation
 
-### Update rule
+For U(1), each link is represented by a compact angle
+$$
+U_{x,\mu}=e^{i\theta_{x,\mu}}.
+$$
+The field transformation is a phase shift:
+$$
+\theta'_{x,\mu}
+=
+\theta_{x,\mu}
++
+\Delta\theta_{x,\mu}(\theta),
+\qquad
+U'_{x,\mu}
+=
+e^{i\Delta\theta_{x,\mu}(\theta)}U_{x,\mu}.
+$$
 
-The U(1) field transform uses the same 8 checkerboard subsets as the HMC
-masking code:
+### Subset update
+
+Links are partitioned into 8 disjoint subsets and updated sequentially. The
+subset label is
 $$
 s=(\mu,\ x\bmod 2,\ y\bmod 2),
 \qquad
 \mu\in\{0,1\}.
 $$
 
-One subset is updated at a time. For subset $s$, only the active links selected
-by `get_field_mask(s, ...)` are changed:
+For subset $s$, only the active links selected by `get_field_mask(s, ...)`
+are changed:
 $$
-\theta^{(s+1)}_{x,\mu}
+\theta^{(s+1)}_\ell
 =
-\theta^{(s)}_{x,\mu}
+\theta^{(s)}_\ell
 +
-M^{(s)}_{x,\mu}\Delta\theta^{(s)}_{x,\mu}(\theta^{(s)}),
+M^{(s)}_\ell\Delta\theta^{(s)}_\ell(\theta^{(s)}),
+\qquad
+\ell=(x,\mu),
 $$
-where $M^{(s)}_{x,\mu}\in\{0,1\}$ is the active-link mask. The full transform
-is the composition of the 8 subset maps:
+where $M^{(s)}_\ell\in\{0,1\}$ is the active-link mask. The full transform is
+the composition of the 8 subset maps:
 $$
 F = F_7\circ F_6\circ\cdots\circ F_0.
 $$
 
-Within one subset, active links are independent because the CNN coefficients
-are computed from the masked loop features before the active links are
-updated.
+Within one subset, active links are independent because the CNN inputs are
+masked so they do not depend on the active subset. Therefore each subset
+Jacobian factorizes into scalar active-link Jacobians.
 
 ### Input & Output of CNN
 
-For each subset, the current U(1) code first computes the plaquette angles
-$p_x$ and the two rectangle-angle fields $r^{(0)}_x,r^{(1)}_x$:
+For each subset, first compute the plaquette angle field $p_x$ and the two
+rectangle-angle fields $r^{(0)}_x,r^{(1)}_x$:
 $$
 \mathrm{plaq}=\texttt{plaq\_from\_field\_batch}(\theta),
 \qquad
@@ -400,49 +419,66 @@ $$
 (\sin r^{(0)},\sin r^{(1)},\cos r^{(0)},\cos r^{(1)}).
 $$
 
-Thus the plaquette CNN input has 2 channels and the rectangle CNN input has 4
-channels. The model returns
+The model returns
 $$
 k^{(p)}\in\mathbb{R}^{8},
 \qquad
 k^{(r)}\in\mathbb{R}^{16}
 $$
-per lattice site. The channel layout is:
+per lattice site. The CNN channel summary is:
 
-- plaquette: 4 sin coefficients followed by 4 cos coefficients.
-- rectangle: 8 sin coefficients followed by 8 cos coefficients.
-
-In the current `addcos` model, these are bounded as
-$$
-|k^{(p)}|<\frac{1}{5},
-\qquad
-|k^{(r)}|<\frac{1}{40}.
-$$
-
-The older `base` model has the same output layout, but sets the cos
-coefficient channels to zero.
+- input plaquette channels: 2, given by $(\sin p,\cos p)$.
+- input rectangle channels: 4, given by
+  $(\sin r^{(0)},\sin r^{(1)},\cos r^{(0)},\cos r^{(1)})$.
+- output plaquette channels: 8, with 4 sin coefficients followed by 4 cos
+  coefficients. The 4 plaquette coefficient slots cover both link directions:
+  2 stack entries for $\mu=0$ and 2 stack entries for $\mu=1$.
+- output rectangle channels: 16, with 8 sin coefficients followed by 8 cos
+  coefficients. The 8 rectangle coefficient slots also cover both link
+  directions: 4 stack entries for $\mu=0$ and 4 stack entries for $\mu=1$.
 
 ### Transformation
 
-For one active link $\ell=(x,\mu)$, the code stacks the loop angles touching
-that link:
+For one active link $\ell=(x,\mu)$, let $l$ label one oriented Wilson loop
+touching that link. The loop index runs over the attached $1\times1$
+plaquettes and $1\times2$ rectangles:
+$$
+l\in P(\ell)\cup R(\ell),
+\qquad
+|P(\ell)|=2,
+\qquad
+|R(\ell)|=4.
+$$
+
+The loop angles are stored in shifted stacks:
 
 - two plaquette angles for each link direction, selected from the 4-channel
   `plaq_angles` stack.
 - four rectangle angles for each link direction, selected from the 8-channel
   `rect_angles` stack.
 
-Let these relevant loop angles be $a_l$, with orientation signs
-$\sigma_l=\pm1$ matching `_plaq_phase_shift` and `_rect_phase_shift`. The
-code uses
+Let $a_l$ denote the selected loop angle:
+$$
+a_l(\theta)
+=
+\begin{cases}
+\text{the selected entry of } \texttt{\_plaq\_angle\_stack}(\mathrm{plaq}),
+& l\in P(\ell),\\
+\text{the selected entry of } \texttt{\_rect\_angle\_stack}(\mathrm{rect}),
+& l\in R(\ell).
+\end{cases}
+$$
+For link direction $\mu=0$, the active update uses plaquette stack channels
+$0,1$ and rectangle stack channels $0,1,2,3$. For link direction $\mu=1$, it
+uses plaquette stack channels $2,3$ and rectangle stack channels $4,5,6,7$.
+
+The orientation signs are
 $$
 \sigma^{(p)}=(-1,+1,+1,-1),
 \qquad
 \sigma^{(r)}=(-1,+1,-1,+1,+1,-1,+1,-1).
 $$
-For each active link direction, the update uses the relevant two plaquette
-entries and four rectangle entries from these stacks. The
-implemented phase update has the form
+The phase shift is
 $$
 \Delta\theta_\ell
 =
@@ -463,14 +499,14 @@ k^{(r,\cos)}_l\cos a_l
 \right].
 $$
 
-This is the formula implemented by `_plaq_phase_shift` and
-`_rect_phase_shift`. The sin coefficient channels multiply signed
-$\sin(\text{loop angle})$ terms, and the cos coefficient channels multiply the
-oppositely signed $\cos(\text{loop angle})$ terms.
+This formula includes both the sine channels and the optional cos channels.
+When the cos channels are zero, it reduces to the sine-only transformation.
+
+### Jacobian
 
 For the local Jacobian, the coefficients are treated as independent of the
-active link within the current subset. Since the loop-angle orientation in the
-code gives
+active link within the current subset, because the CNN inputs are masked before
+the active links are updated. Since
 $$
 \frac{\partial a_l}{\partial\theta_\ell}=-\sigma_l,
 $$
@@ -494,17 +530,58 @@ k^{(p,\cos)}_l\sin a_l
 k^{(r,\sin)}_l\cos a_l
 +
 k^{(r,\cos)}_l\sin a_l
-\right].
+\right],
 $$
+matching `_plaq_jac_shift` and `_rect_jac_shift`, where the Jacobian shift is
+built from the `[-cos(loop), -sin(loop)]` stack.
 
-This matches `_plaq_jac_shift` and `_rect_jac_shift`, where the Jacobian shift
-is built from the `[-cos(loop), -sin(loop)]` stack. In the older `base` model,
-the cos coefficient channels are zero, so the Jacobian shift reduces to the
-terms proportional to $-\ k_l\cos a_l$.
+For the current bounded coefficient layout with cos terms, set
+$$
+c_{\rm plaq}=\frac15,
+\qquad
+c_{\rm rect}=\frac1{40}.
+$$
+The strict `tanh` bounds give
+$$
+|k^{(p,\sin)}_l|,\ |k^{(p,\cos)}_l| < c_{\rm plaq},
+\qquad
+|k^{(r,\sin)}_l|,\ |k^{(r,\cos)}_l| < c_{\rm rect}.
+$$
+Since $|\sin a_l|\le1$ and $|\cos a_l|\le1$,
+$$
+\left|
+k^{(p,\sin)}_l\cos a_l
++
+k^{(p,\cos)}_l\sin a_l
+\right|
+<
+2c_{\rm plaq},
+$$
+and similarly each rectangle contribution is strictly bounded by
+$2c_{\rm rect}$. Each active link sees 2 plaquette loops and 4 rectangle loops,
+so
+$$
+\left|J_\ell-1\right|
+<
+2(2c_{\rm plaq})+4(2c_{\rm rect})
+=
+4c_{\rm plaq}+8c_{\rm rect}
+=
+4\cdot\frac15+8\cdot\frac1{40}
+=
+1.
+$$
+Therefore
+$$
+\boxed{J_\ell>0}
+$$
+for every active U(1) link in exact arithmetic. This is the explicit reason
+the current $1/5$ and $1/40$ coefficient boundaries make the scalar Jacobian
+positive even with cos channels.
 
 The subset log determinant is therefore
 $$
-\log|\det J_s|
+\log\det J_s
 =
 \sum_{\ell\in s}\log J_\ell,
 $$
@@ -514,544 +591,569 @@ which is the `torch.log(1 + plaq_jac_shift + rect_jac_shift)` expression in
 
 ---
 
-## 4. U(2) Field Transformation
+## U(2) Field Transformation
 
 ### Representation
 
-
-### Update rule
-
+For U(2), each link is represented in the split convention
 $$
-U' = \exp(\Delta(U)) \, U
+U_{x,\mu}=e^{i\phi_{x,\mu}}q_{x,\mu},
+\qquad
+q_{x,\mu}=q_0I+i\sum_{a=1}^3q_a\sigma_a\in SU(2).
+$$
+The tangent update lives in
+$$
+u(2)\simeq u(1)\oplus su(2),
+\qquad
+\Delta_{x,\mu}
+=
+(\Delta_{\phi,x,\mu},\Delta_{1,x,\mu},
+\Delta_{2,x,\mu},\Delta_{3,x,\mu}).
 $$
 
+The field transformation uses left multiplication:
 $$
-\Delta(U) \in u(2)
+U'_{x,\mu}
+=
+\exp_{U(2)}(\Delta_{x,\mu}(U))\,U_{x,\mu}.
 $$
-
-For the left-multiplication update of link $U_{x,\mu}$ to be gauge
-covariant in this convention, the algebra update must transform at the
-left endpoint $x+\hat\mu$:
+In the split storage this means
+$$
+\phi'_{x,\mu}
+=
+\phi_{x,\mu}+\Delta_{\phi,x,\mu},
+\qquad
+q'_{x,\mu}
+=
+\exp_{SU(2)}
+\!\left(\sum_{a=1}^3\Delta_{a,x,\mu}\,i\sigma_a\right)
+q_{x,\mu},
+$$
+followed by phase wrapping and quaternion normalization in the implementation.
+For this update to be gauge covariant under
+$$
+U_{x,\mu}\rightarrow U^G_{x,\mu}
+=G_{x+\hat\mu}U_{x,\mu}G_x^\dagger,
+$$
+the algebra update must transform at the left endpoint:
 $$
 \Delta_{x,\mu}(U^G)
 =
 G_{x+\hat\mu} \Delta_{x,\mu}(U) G_{x+\hat\mu}^\dagger .
 $$
 
-### Key structural property
+### Subset update
 
-**CNN coefficients depend only on frozen subsets**, not on active links:
+The U(2) transform uses the same 8-subset link partition as U(1):
 $$
-\frac{\partial k}{\partial U_{\text{active}}} = 0
+s=(\mu,\ x\bmod 2,\ y\bmod 2),
+\qquad
+\mu\in\{0,1\}.
 $$
+For subset $s$, only the active links selected by the link mask are changed:
+$$
+U^{(s+1)}_\ell
+=
+\exp_{U(2)}
+\!\left(M^{(s)}_\ell\Delta^{(s)}_\ell(U^{(s)})\right)
+U^{(s)}_\ell,
+\qquad
+\ell=(x,\mu),
+$$
+where $M^{(s)}_\ell\in\{0,1\}$ is the active-link mask. The full
+transformation is the composition
+$$
+F = F_7\circ F_6\circ\cdots\circ F_0.
+$$
+As in U(1), the loop inputs for one subset are masked so that the CNN
+coefficients depend only on frozen links, not on the active links in that
+subset:
+$$
+\frac{\partial k}{\partial U_{\mathrm{active}}}=0.
+$$
+Therefore the local Jacobian derivatives come from the explicit loop factors
+inside the update, not from differentiating the CNN coefficients through the
+active links.
 
-Thus Jacobian derivatives only arise from loop features.
+### Input & Output of CNN
 
-### Gauge-covariance issue in the old U(2) base implementation
+For each subset, first compute the closed U(2) plaquette loops and the two
+closed rectangle-loop orientations:
+$$
+\mathrm{plaq}=\texttt{plaquette\_from\_field\_batch}(U),
+\qquad
+\mathrm{rect}=\texttt{rectangle\_from\_field\_batch}(U).
+$$
+For U(2), the rectangle multiplication order is part of the definition: the
+product must be a closed non-Abelian Wilson loop. Unlike U(1), changing the
+order changes the matrix-valued loop.
 
-For a U(2) loop matrix $C$, the code uses the same split representation:
+For a closed loop
 $$
 C=e^{i\phi}q,
 \qquad
-q=q_0I+i\sum_{a=1}^3 q_a\sigma_a .
+q=q_0I+i\sum_{a=1}^3q_a\sigma_a\in SU(2),
+$$
+the ordinary CNN should receive only gauge-invariant scalar loop features.
+The U(2) scalar input for one loop is
+$$
+\left(
+q_0\cos\phi,
+q_0\sin\phi,
+\cos\phi,
+\sin\phi,
+2(2q_0^2-1)\cos(2\phi),
+2(2q_0^2-1)\sin(2\phi)
+\right).
+$$
+The first two entries are trace-like phase features, the next two encode the
+central phase, and the final two are the real and imaginary parts of
+$\mathrm{Tr}\,C^2$. With one plaquette orientation and two rectangle
+orientations, this gives 6 plaquette input channels and 12 rectangle input
+channels before the CNN combines them spatially.
+
+The CNN output does not directly output $\Delta$. It outputs scalar
+coefficient slots for the component-wise field transform. For each selected
+loop $l$, the coefficient vector is
+$$
+k_l=(k_{l,0},k_{l,1},k_{l,2},k_{l,3}).
+$$
+The coefficients are scalar fields computed from the invariant CNN inputs
+above. The CNN channel summary is:
+
+- input plaquette channels: 6, one six-scalar feature vector for the plaquette
+  loop.
+- input rectangle channels: 12, from 2 rectangle orientations times 6 scalar
+  features.
+- output plaquette channels: 16, from 4 plaquette loops times 4 coefficient
+  slots. The 4 plaquette loop slots cover both link directions: 2 for
+  $\mu=0$ and 2 for $\mu=1$.
+- output rectangle channels: 32, from 8 rectangle loops times 4 coefficient
+  slots. The 8 rectangle loop slots cover both link directions: 4 for
+  $\mu=0$ and 4 for $\mu=1$.
+
+### Transformation
+
+For one active link $\ell=(x,\mu)$, let $l$ label one oriented closed loop
+touching that link:
+$$
+l\in P(\ell)\cup R(\ell),
+\qquad
+|P(\ell)|=2,
+\qquad
+|R(\ell)|=4.
+$$
+The 4 plaquette and 8 rectangle output-loop slots are the full stack layout
+for both link directions. A fixed active link direction uses only the
+corresponding half of those slots, which is why a single link has
+$|P(\ell)|=2$ and $|R(\ell)|=4$.
+For link direction $\mu=0$, the active update uses the two plaquette stack
+entries associated with direction 0 and the four rectangle stack entries
+associated with direction 0. For $\mu=1$, it uses the corresponding direction
+1 stack entries. The orientation signs are the same pattern as U(1):
+$$
+\sigma^{(p)}=(-1,+1,+1,-1),
+\qquad
+\sigma^{(r)}=(-1,+1,-1,+1,+1,-1,+1,-1).
 $$
 
-Expanding the complex matrix gives
+For a selected loop
 $$
-C
-=
-q_0\cos\phi\, I
-+
-q_0\sin\phi\, iI
-+
-\sum_a q_a\cos\phi\, i\sigma_a
--
-\sum_a q_a\sin\phi\, \sigma_a .
+C_l=e^{i\phi_l}q_l,
+\qquad
+q_l=q_{0,l}I+i\sum_{a=1}^3q_{a,l}\sigma_a,
 $$
-
-The function `loop_sin_cos_features(C)` stores these components as 8 real
-channels:
+the split real features used by the field-transform formula are
 $$
-\mathrm{sin\_like}(C)
+\mathrm{sin\_like}(C_l)
 =
 \left(
-q_0\sin\phi,\ q_1\cos\phi,\ q_2\cos\phi,\ q_3\cos\phi
+q_{0,l}\sin\phi_l,
+q_{1,l}\cos\phi_l,
+q_{2,l}\cos\phi_l,
+q_{3,l}\cos\phi_l
 \right),
 $$
 $$
-\mathrm{cos\_like}(C)
+\mathrm{cos\_like}(C_l)
 =
 \left(
-q_0\cos\phi,\ -q_1\sin\phi,\ -q_2\sin\phi,\ -q_3\sin\phi
+q_{0,l}\cos\phi_l,
+-q_{1,l}\sin\phi_l,
+-q_{2,l}\sin\phi_l,
+-q_{3,l}\sin\phi_l
 \right).
 $$
-
-So the feature layout is:
-
-- channel 0: central $iI$ sin-like scalar, $q_0\sin\phi$
-- channels 1:4: traceless $i\sigma_a$ sin-like color vector,
-  $q_a\cos\phi$
-- channel 4: central $I$ cos-like scalar, $q_0\cos\phi$
-- channels 5:8: traceless $\sigma_a$ cos-like color vector,
-  $-q_a\sin\phi$
-
-The old base implementation had two distinct objects:
-
-1. **CNN input features.** For each loop $l$, the input was the feature vector
-   $$
-   f_l(C_l)
-   =
-   \left(
-   q_0\sin\phi,\ q_1\cos\phi,\ q_2\cos\phi,\ q_3\cos\phi,\ 
-   q_0\cos\phi,\ -q_1\sin\phi,\ -q_2\sin\phi,\ -q_3\sin\phi
-   \right)_l .
-   $$
-   These are the values returned by `loop_sin_cos_features`. In the old
-   implementation, all eight components were treated as ordinary scalar CNN
-   input channels.
-
-2. **CNN output coefficients.** The CNN output did not directly output
-   $\Delta$. It output local coefficients for the field transform. In the full
-   field-transform layout, each loop $l$ had four coefficient slots:
-   $$
-   k_l=(k_{l,0},k_{l,1},k_{l,2},k_{l,3}).
-   $$
-   For the four plaquette loops this gives 16 output channels; for the eight
-   rectangle loops this gives 32 output channels.
-
-The `_loop_delta` code then combined the CNN input features $f_l$ and CNN
-output coefficients $k_l$ to build the algebra update. For one loop $l$, with
-orientation sign $s_l=\pm1$, the contribution had the structure
+The four coefficient slots combine these real split components into one
+$u(2)\simeq u(1)\oplus su(2)$ contribution:
 $$
 \Delta_{\phi,l}
 =
-k_{l,0}\,s_l\,q_0\sin\phi
+k_{l,0}\,\sigma_l\,q_{0,l}\sin\phi_l
 +
-k_{l,2}\,q_0\cos\phi,
+k_{l,2}\,q_{0,l}\cos\phi_l,
 $$
 $$
 \Delta_{a,l}
 =
-k_{l,1}\,s_l\,q_a\cos\phi
+k_{l,1}\,\sigma_l\,q_{a,l}\cos\phi_l
 -
-k_{l,3}\,q_a\sin\phi,
+k_{l,3}\,q_{a,l}\sin\phi_l,
 \qquad a=1,2,3.
 $$
-
-Here $k_{l,r}$ is a CNN output coefficient, while the $q_0\sin\phi$,
-$q_a\cos\phi$, $q_0\cos\phi$, and $-q_a\sin\phi$ factors are loop features
-computed from the gauge field.
-
-Thus the old transform used both central U(1)-like loop scalars and
-traceless SU(2)-like color-vector loop structures to build
+The active-link update is the sum over its attached plaquette and rectangle
+loops:
 $$
-\Delta_l
+\Delta_\ell
 =
-(\Delta_{\phi,l},\Delta_{1,l},\Delta_{2,l},\Delta_{3,l})
-\in u(1)\oplus su(2).
+\sum_{l\in P(\ell)\cup R(\ell)}
+(\Delta_{\phi,l},\Delta_{1,l},\Delta_{2,l},\Delta_{3,l}).
+$$
+If traceless components are used, the loop component vector
+$(q_{1,l},q_{2,l},q_{3,l})$ must be based at, or parallel transported to, the
+active link's left endpoint so that the resulting
+$(\Delta_{1,l},\Delta_{2,l},\Delta_{3,l})$ transforms in the correct local
+color frame.
+
+### Jacobian
+
+For the local Jacobian, perturb one active U(2) link by a tangent algebra
+element $X\in u(2)$:
+$$
+U_X=\exp_{U(2)}(X)U.
+$$
+The output tangent is
+$$
+Y=\log_{U(2)}(U'_XU'^\dagger),
+$$
+so one active link contributes a real $4\times4$ Jacobian block
+$$
+J_\ell=\frac{\partial Y}{\partial X}.
 $$
 
-This is sufficient for the local Jacobian analysis below, but it does **not**
-guarantee U(2) gauge covariance. The central scalar pieces
-$q_0\sin\phi$ and $q_0\cos\phi$ are trace-like gauge-invariant loop scalars.
-The vectors $(q_1,q_2,q_3)$ are different: for a closed loop based at a site,
-they transform by a local adjoint SO(3) color rotation under gauge
-transformations. The old CNN treated those vector components as fixed scalar
-channels, so its coefficients could depend on the arbitrary local color frame.
-Therefore the old base transform could learn gauge-frame-dependent updates.
-
-This is the main structural difference from U(1). In U(1), the corresponding
-loop angles are gauge-invariant scalars because the group is Abelian.
-
-### Current scalar-only diagnostic implementation
-
-The current U(2) `base` implementation is the minimal gauge-symmetric
-diagnostic variant. It keeps the original full coefficient layout at the
-field-transform interface, but the CNN itself only sees gauge-invariant
-scalar features and only produces phase-update coefficients.
-
-For each loop, `loop_sin_cos_features` has 8 channels:
-
-- channel 0: scalar sin-like phase feature
-- channels 1:4: traceless sin-like color features
-- channel 4: scalar cos-like phase feature
-- channels 5:8: traceless cos-like color features
-
-The scalar-only U(2) base keeps only channels 0 and 4 before the CNN.
-Therefore:
-
-- plaquette CNN input has 2 channels
-- rectangle CNN input has 4 channels, from 2 rectangle orientations times
-  2 scalar channels
-
-The CNN outputs only sin-like phase coefficients, matching the current U(1)
-`base` model:
-
-- plaquette: 4 loops times 1 sin-like phase slot = 4 nonzero channels
-- rectangle: 8 loops times 1 sin-like phase slot = 8 nonzero channels
-
-These are expanded back to the full field-transform layout:
-
-- plaquette full layout: 16 channels
-- rectangle full layout: 32 channels
-
-For each loop, coefficient slot 0 is the sin-like phase slot and coefficient
-slot 2 is the cos-like phase slot, while slots 1 and 3 are traceless color
-slots. The current base model sets slots 1, 2, and 3 to zero. Thus the total
-full-layout output has 12 nonzero sin-like phase channels and 36 identically
-zero channels.
-
-This scalar-only update is gauge covariant because the update is proportional
-to the central generator $iI$. The scalar coefficient is gauge invariant, and
-$iI$ commutes with every local gauge rotation.
-
-The U(2) rectangle loop multiplication order must also be a closed
-non-Abelian Wilson loop. In U(1), the additive rectangle angle is insensitive
-to ordering, but in U(2) the matrix product order is physical. If the order
-does not close as a Wilson loop, even trace-like rectangle features are not
-gauge invariant.
-
-The current tests check:
+Within one subset, the CNN coefficients $k_l$ are independent of the active
+links because of the input masks. Therefore the derivative is taken only
+through the split loop variables $(\phi_l,q_l)$. If the active-link tangent
+induces first-order loop variations
 $$
-F(U^G)=F(U)^G,
+\delta\phi_l,
 \qquad
-\log|\det J(U^G)|=\log|\det J(U)|.
-$$
-
-
-
----
-
-## 5. U(2) Jacobian Structure
-
-Introduce tangent perturbation:
-$$
-U_X = \exp(X)U
-$$
-
-Output tangent:
-$$
-Y = \log(U'_X U'^\dagger)
-$$
-
-Jacobian:
-$$
-J = \frac{\partial Y}{\partial X}
-$$
-
-Each active link contributes a $4\times4$ real matrix.
-
----
-
-## 6. Decomposition of the Jacobian
-
-$$
-J = Q + E
-$$
-
-where:
-
-- $Q = \mathrm{Ad}_{\exp(\Delta)}$
-- $E = D\exp_\Delta[D\Delta]$
-
-Here $D$ means the differential, or first-order linearization, of a map:
-
-- $D\Delta$ maps an input tangent $X$ to the induced first-order change in the algebra update $\Delta(U)$.
-- $D\exp_\Delta[\cdot]$ maps that first-order algebra change through the exponential map at the base point $\Delta$.
-
-Thus $E$ is the part of the output tangent caused by the active-link dependence of $\Delta(U)$. It is shorthand for the linear map:
-$$
-X
-\mapsto
-D\exp_\Delta\!\left[D\Delta[X]\right].
-$$
-
-### Property of $Q$
-
-In the chosen orthonormal basis of $u(2)=u(1)\oplus su(2)$:
-
-- $Q$ is orthogonal
-- $\|Q\|_2 = 1$
-- $\det Q = 1$
-
----
-
-## 7. Invertibility Condition
-
-We write:
-$$
-J = Q(I + Q^{-1}E)
-$$
-
-If
-$$
-\|E\|_2 < 1
-$$
-
-then
-$$
-\|Q^{-1}E\|_2 < 1
-$$
-
-and therefore $I + Q^{-1}E$ is invertible via Neumann series:
-$$
-(I + Q^{-1}E)^{-1} = \sum_{n=0}^{\infty}(-Q^{-1}E)^n
-$$
-
-Thus:
-$$
-\boxed{J \text{ is non-singular}}
-$$
-
----
-
-## 8. Current U(2) Base Caps
-
-The current U(2) `base` model returns:
-$$
-k_{\rm plaq} = \frac{\tanh z_{\rm plaq}}{5},
+\delta q_{0,l},
 \qquad
-k_{\rm rect} = \frac{\tanh z_{\rm rect}}{40}.
+\delta q_{a,l},
 $$
+then the feature derivatives are
+$$
+\delta(q_{0,l}\sin\phi_l)
+=
+\delta q_{0,l}\sin\phi_l
++
+q_{0,l}\cos\phi_l\,\delta\phi_l,
+$$
+$$
+\delta(q_{a,l}\cos\phi_l)
+=
+\delta q_{a,l}\cos\phi_l
+-
+q_{a,l}\sin\phi_l\,\delta\phi_l,
+$$
+$$
+\delta(q_{0,l}\cos\phi_l)
+=
+\delta q_{0,l}\cos\phi_l
+-
+q_{0,l}\sin\phi_l\,\delta\phi_l,
+$$
+$$
+\delta(-q_{a,l}\sin\phi_l)
+=
+-\delta q_{a,l}\sin\phi_l
+-
+q_{a,l}\cos\phi_l\,\delta\phi_l.
+$$
+Thus one loop contributes
+$$
+\delta\Delta_{\phi,l}
+=
+k_{l,0}\sigma_l
+\left[
+\delta q_{0,l}\sin\phi_l
++
+q_{0,l}\cos\phi_l\,\delta\phi_l
+\right]
++
+k_{l,2}
+\left[
+\delta q_{0,l}\cos\phi_l
+-
+q_{0,l}\sin\phi_l\,\delta\phi_l
+\right],
+$$
+$$
+\delta\Delta_{a,l}
+=
+k_{l,1}\sigma_l
+\left[
+\delta q_{a,l}\cos\phi_l
+-
+q_{a,l}\sin\phi_l\,\delta\phi_l
+\right]
++
+k_{l,3}
+\left[
+-\delta q_{a,l}\sin\phi_l
+-
+q_{a,l}\cos\phi_l\,\delta\phi_l
+\right].
+$$
+These are the component-wise derivatives of the same four split features used
+in the transformation formula.
 
-Since $\tanh z$ is strictly bounded by 1 for finite real $z$:
+The full active-link Jacobian block maps
+$(X_\phi,X_1,X_2,X_3)$ to $(Y_\phi,Y_1,Y_2,Y_3)$. The subset Jacobian
+factorizes over active links:
 $$
-|k_{\rm plaq}| < \frac{1}{5},
+\det J_s
+=
+\prod_{\ell\in s}\det J_\ell,
 \qquad
-|k_{\rm rect}| < \frac{1}{40}.
+\log|\det J_s|
+=
+\sum_{\ell\in s}\log|\det J_\ell|.
 $$
 
-In the current scalar-only base, these caps apply to the nonzero phase
-coefficient channels. The traceless coefficient channels are identically zero,
-so they are trivially bounded.
-
-For one U(2) loop, the sin-like and cos-like coefficient groups give the conservative derivative bound:
+The local block can be written as
 $$
-\|D\Delta_l\|_2 \le 2c_l.
+J_\ell = Q_\ell + E_\ell,
+$$
+where the two terms have different origins.
+
+The $Q_\ell$ term is what remains if $\Delta_\ell$ is held fixed while the
+input link is perturbed. Write
+$$
+\exp_{U(2)}(\Delta_\ell)
+=
+(\alpha_\ell,r_\ell),
+\qquad
+r_\ell=(r_0,r_1,r_2,r_3)\in SU(2),
+$$
+where $\alpha_\ell=\Delta_{\phi,\ell}$ is the central phase and
+$r_\ell=\exp_{SU(2)}(\Delta_{1,\ell},\Delta_{2,\ell},\Delta_{3,\ell})$.
+Because the central U(1) phase commutes with every algebra element,
+the adjoint action leaves the $u(1)$ tangent component unchanged. The
+traceless tangent vector is rotated by conjugation with the SU(2) quaternion:
+$$
+\mathrm{Ad}_{\exp(\Delta_\ell)}
+\begin{pmatrix}
+X_\phi\\
+X_1\\
+X_2\\
+X_3
+\end{pmatrix}
+=
+\begin{pmatrix}
+X_\phi\\
+\mathcal R(r_\ell)
+\begin{pmatrix}
+X_1\\
+X_2\\
+X_3
+\end{pmatrix}
+\end{pmatrix}.
+$$
+Thus, in the split basis,
+$$
+Q_\ell
+=
+\begin{pmatrix}
+1 & 0\\
+0 & \mathcal R(r_\ell)
+\end{pmatrix}.
+$$
+For $v=(r_1,r_2,r_3)$ and
+$$
+[v]_\times
+=
+\begin{pmatrix}
+0 & -r_3 & r_2\\
+r_3 & 0 & -r_1\\
+-r_2 & r_1 & 0
+\end{pmatrix},
+$$
+the rotation matrix in the code's quaternion convention is
+$$
+\mathcal R(r)
+=
+(r_0^2-v^Tv)I_3
++
+2vv^T
+-
+2r_0[v]_\times .
+$$
+Equivalently,
+$$
+\mathcal R(r)
+=
+\begin{pmatrix}
+r_0^2+r_1^2-r_2^2-r_3^2
+&
+2(r_1r_2+r_0r_3)
+&
+2(r_1r_3-r_0r_2)
+\\
+2(r_1r_2-r_0r_3)
+&
+r_0^2-r_1^2+r_2^2-r_3^2
+&
+2(r_2r_3+r_0r_1)
+\\
+2(r_1r_3+r_0r_2)
+&
+2(r_2r_3-r_0r_1)
+&
+r_0^2-r_1^2-r_2^2+r_3^2
+\end{pmatrix}.
+$$
+Since $r$ is a unit quaternion, conjugation preserves the Euclidean norm of a
+pure quaternion:
+$$
+\left|r(0,X)r^\dagger\right|=|X|.
+$$
+Therefore $\mathcal R(r)^T\mathcal R(r)=I_3$ and
+$\det\mathcal R(r)=1$. Hence
+$$
+\|Q_\ell\|_2=1,
+\qquad
+\det Q_\ell=1.
 $$
 
-For one active link:
-
-- 2 plaquette loops contribute.
-- 4 rectangle loops contribute.
-
-Therefore:
+The $E_\ell$ term is the remaining part caused by the active-link dependence
+of the loop factors in $\Delta_\ell$. In differential notation,
 $$
-\|E\|_2
-\le
-4c_{\rm plaq} + 8c_{\rm rect}.
+E_\ell X
+=
+D\exp_{\Delta_\ell}\!\left[D\Delta_\ell[X]\right],
+$$
+with the result expressed in the same output tangent coordinates as $Y$. This
+is the term computed from the component derivatives of
+$(\phi_l,q_{0,l},q_{1,l},q_{2,l},q_{3,l})$ above.
+
+Concretely, the first step is the loop-feature derivative:
+$$
+D\Delta_\ell[X]
+=
+\delta\Delta_\ell
+=
+\sum_{l\in P(\ell)\cup R(\ell)}
+(\delta\Delta_{\phi,l},
+\delta\Delta_{1,l},
+\delta\Delta_{2,l},
+\delta\Delta_{3,l}).
+$$
+Each $\delta\Delta_{\phi,l}$ and $\delta\Delta_{a,l}$ is linear in $X$,
+because the induced loop variations
+$(\delta\phi_l,\delta q_{0,l},\delta q_{1,l},\delta q_{2,l},\delta q_{3,l})$
+are linear in the active-link tangent. This is the quantity called
+`delta_jac` in the code, built by `_plaq_delta_jac` and `_rect_delta_jac`.
+
+The second step is the differential of the group exponential. Write
+$$
+\Delta_\ell=(\Delta_{\phi,\ell},\Delta_{\mathrm{vec},\ell}),
+\qquad
+\delta\Delta_\ell=(\delta\Delta_{\phi,\ell},
+\delta\Delta_{\mathrm{vec},\ell}),
+$$
+where
+$$
+\Delta_{\mathrm{vec},\ell}
+=
+(\Delta_{1,\ell},\Delta_{2,\ell},\Delta_{3,\ell}).
+$$
+The central phase part is linear, so it passes through unchanged:
+$$
+(E_\ell X)_\phi=\delta\Delta_{\phi,\ell}.
+$$
+The SU(2) part is not simple addition; it is the left-trivialized
+differential of the SU(2) exponential:
+$$
+(E_\ell X)_{\mathrm{vec}}
+=
+D\exp_{SU(2),\Delta_{\mathrm{vec},\ell}}
+\left[\delta\Delta_{\mathrm{vec},\ell}\right].
+$$
+This is exactly the `_exp_tangent(delta, delta_jac)` contribution in the
+manual Jacobian code.
+
+Equivalently, the $4\times4$ matrix $E_\ell$ is obtained column by column:
+for each tangent basis vector
+$$
+e_\phi,\ e_1,\ e_2,\ e_3,
+$$
+compute $D\Delta_\ell[e_j]$ from the attached loop-feature derivatives, pass
+it through $D\exp_{\Delta_\ell}[\cdot]$, and place the resulting output
+tangent vector as column $j$ of $E_\ell$.
+
+Therefore
+$$
+J_\ell
+=
+Q_\ell(I+Q_\ell^{-1}E_\ell),
+$$
+and the sufficient non-singularity condition is
+$$
+\|E_\ell\|_2<1.
 $$
 
-The current caps give:
+With coefficient caps
 $$
-4c_{\rm plaq}+8c_{\rm rect}
+c_{\rm plaq}=\frac15,
+\qquad
+c_{\rm rect}=\frac1{40},
+$$
+one active link receives 2 plaquette-loop contributions and 4
+rectangle-loop contributions. The conservative bound is
+$$
+\|E_\ell\|_2
 <
-4\cdot\frac15
-+
-8\cdot\frac1{40}
+4c_{\rm plaq}+8c_{\rm rect}
 =
-1.
+4\cdot\frac15+8\cdot\frac1{40}
+=1,
 $$
+where the inequality is strict because the coefficients are strictly bounded
+by their `tanh` caps for finite real network outputs. Hence each active-link
+block is non-singular in exact arithmetic. The determinant sign is positive
+by the homotopy $J_\ell(t)=Q_\ell+tE_\ell$, since the block cannot cross a
+zero determinant along $t\in[0,1]$ and $\det J_\ell(0)=1$.
 
-Thus the current caps imply $\|E\|_2<1$, which is exactly the sufficient condition used above. This is why the present `base` caps guarantee that every local U(2) active-link Jacobian block is invertible in real arithmetic.
+The full U(2) transform is the composition of the 8 subset maps. Since each
+subset map has non-singular active-link blocks under the same bound, and the
+scaled maps $\exp(t\Delta)$ connect each subset continuously to the identity,
+the subset maps are globally invertible on the compact product of U(2) link
+manifolds. Their composition is therefore globally invertible under these
+coefficient bounds.
 
-Numerically, the margin is small when `tanh` saturates close to 1, but the mathematical bound is strict because the coefficient caps are strict.
+## Summary
 
----
+The U(1) field transformation is a scalar compact phase shift. Its loop
+inputs are ordinary gauge-invariant sine and cosine features, its active-link
+Jacobian is a scalar, and the coefficient caps make that scalar strictly
+positive. The 8-subset composition is therefore globally invertible.
 
-## 9. Determinant Sign
+The U(2) field transformation has the same subset structure but a larger
+local tangent space. Each active link carries one central phase direction and
+three traceless SU(2) directions, so the local Jacobian is a $4\times4$ real
+block rather than a scalar. Gauge covariance requires the CNN to see only
+gauge-invariant scalar loop inputs, such as $q_0\cos\phi$, $q_0\sin\phi$,
+$\cos\phi$, $\sin\phi$, $2(2q_0^2-1)\cos(2\phi)$, and
+$2(2q_0^2-1)\sin(2\phi)$. The update itself is written in the split
+coordinates $(\phi,q_0,q_1,q_2,q_3)$, and any traceless component must be
+based or transported so it transforms in the active link's local color frame.
 
-Define:
-$$
-J(t) = Q + tE, \quad t \in [0,1]
-$$
-
-Since
-$$
-\|Q^{-1} tE\|_2 < 1
-$$
-for all $t$, $J(t)$ is non-singular along the path.
-
-Thus determinant cannot cross zero.
-
-Since:
-$$
-\det J(0) = \det Q = 1 > 0
-$$
-
-we conclude:
-$$
-\boxed{\det J > 0}
-$$
-
----
-
-## 10. Gauge-Covariant U(2) Design
-
-A gauge-covariant U(2) field transform should separate scalar neural-network
-data from color-covariant algebra data.
-
-For each active link $U_{x,\mu}$, use:
-
-1. **Gauge-invariant scalar CNN inputs**
-
-   Examples:
-   $$
-   \mathrm{ReTr}\,C,\quad \mathrm{Im}\det C,\quad
-   \mathrm{Re}\det C,\quad \mathrm{Tr}(C C^\dagger)
-   $$
-   for plaquette and rectangle loops. The ordinary CNN should only see such
-   scalar fields.
-
-2. **Gauge-invariant scalar CNN outputs**
-
-   The network outputs scalar coefficients:
-   $$
-   a^{(0)}_{x,\mu},\quad a^{(r)}_{x,\mu}.
-   $$
-   These coefficients are invariant under local gauge rotations.
-
-3. **Gauge-covariant algebra basis elements**
-
-   Build basis matrices $B^{(r)}_{x,\mu}$ from closed loops based at the
-   left endpoint $x+\hat\mu$, or from loops parallel transported to
-   $x+\hat\mu$.
-   Each basis element must transform as:
-   $$
-   B^{(r)}_{x,\mu}(U^G)
-   =
-   G_{x+\hat\mu} B^{(r)}_{x,\mu}(U) G_{x+\hat\mu}^\dagger .
-   $$
-
-   A standard traceless anti-Hermitian basis contribution is:
-   $$
-   B(C_x)
-   =
-   \left[
-   \frac{C_x-C_x^\dagger}{2}
-   -
-   \frac{1}{2}\mathrm{Tr}
-   \left(\frac{C_x-C_x^\dagger}{2}\right) I
-   \right] .
-   $$
-
-Then define:
-$$
-\Delta_{x,\mu}
-=
-a^{(0)}_{x,\mu}\, iI
-+
-\sum_r a^{(r)}_{x,\mu} B^{(r)}_{x,\mu}.
-$$
-
-This transform has more freedom than U(1) because it can update SU(2)
-traceless directions through the covariant bases $B^{(r)}_{x,\mu}$, but it
-still preserves gauge covariance because all CNN inputs and outputs are scalar
-gauge invariants.
-
-### Practical minimum diagnostic variants
-
-- **Scalar-only diagnostic:** feed only gauge-invariant scalar loop features to
-  the CNN and update only the $iI$ phase direction. This should behave most
-  similarly to U(1), and is useful for isolating whether current U(2) loss
-  pathologies come from non-covariant color channels.
-- **Gauge-covariant U(2) base:** keep scalar CNN inputs, but add traceless
-  updates through transported adjoint loop bases as above.
-
-Both variants should be tested with:
-$$
-F(U^G)=F(U)^G,
-\qquad
-\log|\det J(U^G)|=\log|\det J(U)|.
-$$
-
----
-
-## 11. Global Invertibility
-
-Each layer updates disjoint subsets → block factorization:
-
-- U(1): scalar factors
-- U(2): $4\times4$ blocks
-
-For a U(2) subset layer:
-$$
-\det J_{\rm layer}
-=
-\prod_{\ell\in{\rm active}}
-\det J_\ell .
-$$
-
-Since the current caps make every local block $J_\ell$ non-singular with positive determinant, every subset layer is a local diffeomorphism.
-
-To upgrade this from local to global invertibility, introduce the scaled layer:
-$$
-F_{i,t}(U)=\exp(t\Delta_i(U))U,
-\qquad
-t\in[0,1].
-$$
-
-At $t=0$, this is the identity map. For every $t\in[0,1]$, the perturbation bound scales as:
-$$
-\|E_t\|_2
-\le
-t(4c_{\rm plaq}+8c_{\rm rect})
-<1.
-$$
-
-Therefore every $F_{i,t}$ is a local diffeomorphism along a continuous homotopy from the identity to the actual subset layer $F_{i,1}$.
-
-The full U(2) lattice field lives on a finite product of compact connected U(2) manifolds. A local diffeomorphism on this compact connected manifold is a covering map. Since $F_{i,1}$ is homotopic to the identity through non-singular maps, it has degree 1, so the covering has one sheet. Therefore each subset layer is a global diffeomorphism.
-
-Full transform:
-$$
-F = F_7 \circ \cdots \circ F_0
-$$
-
-Composition of globally invertible subset layers gives a globally invertible field transformation.
-
----
-
-## 12. Final Conclusions
-
-### U(1)
-
-- Jacobian scalar
-- strictly positive
-- globally invertible
-
-### U(2)
-
-Under invertibility assumptions:
-
-- CNN depends only on frozen subsets
-- current `base` coefficient caps hold
-
-We have:
-
-$$
-\boxed{
-\text{The full U(2) base field transformation is globally invertible}
-}
-$$
-
-This is a mathematical exact-arithmetic statement. Numerically, the current caps have little margin near saturated `tanh`, and the implemented inverse still relies on fixed-point iteration convergence.
-
-This statement is about invertibility, not gauge covariance. The current U(2)
-base implementation should not be claimed to preserve gauge symmetry unless
-its CNN inputs are restricted to gauge-invariant scalar features and its
-traceless updates are built from gauge-covariant algebra bases at the active
-link start point.
-
----
-
-## 13. Summary
-
-| Property | U(1) | U(2) |
-|---|---|---|
-| Jacobian type | scalar | $4\times4$ block |
-| Positive definite | trivial | not applicable |
-| Non-singular | guaranteed | guaranteed by current `base` caps |
-| Determinant sign | positive | positive |
-| Invertibility | global | global for current `base` caps |
-| Gauge covariance | automatic for scalar loop features | requires scalar CNN features and covariant adjoint bases |
+The same masking idea is essential in both groups: within one subset, the CNN
+coefficients are computed from frozen links and do not depend on the active
+links. For U(1), this gives scalar Jacobian factors. For U(2), this gives
+independent $4\times4$ active-link blocks. Under the stated coefficient caps,
+the U(2) perturbation part of each block has norm strictly below the
+invertibility threshold, so each subset map is non-singular and the full
+8-subset composition is globally invertible in exact arithmetic.
