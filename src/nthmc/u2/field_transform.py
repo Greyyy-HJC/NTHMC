@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.utils.checkpoint import checkpoint
 from tqdm import tqdm
 
 from nthmc.u2.models import choose_model
@@ -86,6 +87,7 @@ class FieldTransformation:
             "max_grad_norm": 10.0,
             "early_stop_patience": 3,
             "loss_weights": (1.0, 1.0, 1.0, 1.0),
+            "checkpoint_delta": False,
         }
         if hyperparams:
             self.hyperparams.update(hyperparams)
@@ -617,7 +619,7 @@ class FieldTransformation:
         exp_delta = u2_exp(delta)
         return self._exp_tangent(delta, delta_jac) + self._adjoint_algebra(exp_delta, link_tangent)
 
-    def compute_delta(self, links: torch.Tensor, index: int) -> torch.Tensor:
+    def _compute_delta_impl(self, links: torch.Tensor, index: int) -> torch.Tensor:
         batch_size = links.shape[0]
         plaq = plaquette_from_field_batch(links)
         rect = rectangle_from_field_batch(links)
@@ -627,6 +629,15 @@ class FieldTransformation:
         delta = self._plaq_delta(plaq_coeffs, plaq_loops) + self._rect_delta(rect_coeffs, rect_loops)
         mask = get_link_mask(index, batch_size, self.lattice_size, self.device)
         return delta * mask.to(delta.dtype)
+
+    def compute_delta(self, links: torch.Tensor, index: int) -> torch.Tensor:
+        if bool(self.hyperparams.get("checkpoint_delta", False)) and torch.is_grad_enabled():
+            return checkpoint(
+                lambda checkpoint_links: self._compute_delta_impl(checkpoint_links, index),
+                links,
+                use_reentrant=False,
+            )
+        return self._compute_delta_impl(links, index)
 
     def ft_phase(self, links: torch.Tensor, index: int) -> torch.Tensor:
         delta = self.compute_delta(links, index)

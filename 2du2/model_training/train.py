@@ -48,6 +48,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--plateau_patience", type=int, default=None)
     parser.add_argument("--early_stop_patience", type=int, default=None)
     parser.add_argument("--loss_weights", type=float, nargs=4, default=None, metavar=("W2", "W4", "W6", "W8"))
+    parser.add_argument("--checkpoint_delta", action="store_true")
     parser.add_argument("--accelerator", type=str, default="cuda")
     parser.add_argument("--strategy", type=str, default="ddp")
     parser.add_argument("--devices", default="auto")
@@ -98,6 +99,8 @@ def main() -> None:
         hyperparams["early_stop_patience"] = args.early_stop_patience
     if args.loss_weights is not None:
         hyperparams["loss_weights"] = tuple(args.loss_weights)
+    if args.checkpoint_delta:
+        hyperparams["checkpoint_delta"] = True
 
     fabric.print("=" * 60)
     fabric.print(">>> U(2) base field-transformation training")

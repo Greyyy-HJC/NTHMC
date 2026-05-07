@@ -1,4 +1,5 @@
 import torch
+import pytest
 
 from nthmc.u2.field_transform import FieldTransformation
 from nthmc.u2.models import LocalNet
@@ -460,6 +461,83 @@ def test_u2_transformed_force_decomposition_matches_compute_force() -> None:
     assert torch.allclose(total_force, force, rtol=1e-5, atol=1e-6)
     assert torch.allclose(total_force, action_force - jac_force, rtol=1e-5, atol=1e-6)
     assert torch.isfinite(jac_logdet).all()
+
+
+def test_u2_checkpoint_delta_preserves_training_loss_and_gradients() -> None:
+    set_seed(1234)
+    base = FieldTransformation(4, n_subsets=2, identity_init=True, hyperparams={"init_std": 0.0001})
+    base.train_beta = 2.0
+    checkpointed = FieldTransformation(
+        4,
+        n_subsets=2,
+        identity_init=True,
+        hyperparams={"init_std": 0.0001, "checkpoint_delta": True},
+    )
+    checkpointed.train_beta = 2.0
+    for checkpointed_model, base_model in zip(checkpointed.models, base.models):
+        checkpointed_model.load_state_dict(base_model.state_dict())
+    links = u2_exp(0.2 * torch.randn(1, 2, 4, 4, 4))
+
+    base_loss = base.loss_fn(links)
+    base_loss.backward()
+    checkpointed_loss = checkpointed.loss_fn(links)
+    checkpointed_loss.backward()
+
+    base_grads = torch.cat(
+        [param.grad.reshape(-1) for model in base.models for param in model.parameters() if param.grad is not None]
+    )
+    checkpointed_grads = torch.cat(
+        [
+            param.grad.reshape(-1)
+            for model in checkpointed.models
+            for param in model.parameters()
+            if param.grad is not None
+        ]
+    )
+    assert torch.allclose(checkpointed_loss, base_loss, rtol=1e-6, atol=1e-6)
+    assert torch.allclose(checkpointed_grads, base_grads, rtol=1e-6, atol=1e-6)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA memory probe requires a GPU")
+def test_u2_checkpoint_delta_reduces_training_peak_cuda_memory() -> None:
+    set_seed(1234)
+    base = FieldTransformation(
+        8,
+        device="cuda",
+        n_subsets=4,
+        identity_init=True,
+        hyperparams={"init_std": 0.0001},
+    )
+    base.train_beta = 2.0
+    checkpointed = FieldTransformation(
+        8,
+        device="cuda",
+        n_subsets=4,
+        identity_init=True,
+        hyperparams={"init_std": 0.0001, "checkpoint_delta": True},
+    )
+    checkpointed.train_beta = 2.0
+    for checkpointed_model, base_model in zip(checkpointed.models, base.models):
+        checkpointed_model.load_state_dict(base_model.state_dict())
+    links = u2_exp(0.2 * torch.randn(1, 2, 8, 8, 4, device="cuda"))
+
+    def peak_bytes(transform: FieldTransformation) -> int:
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+        for optimizer in transform.optimizers:
+            optimizer.zero_grad(set_to_none=True)
+        loss = transform.loss_fn(links)
+        loss.backward()
+        torch.cuda.synchronize()
+        peak = torch.cuda.max_memory_allocated()
+        for optimizer in transform.optimizers:
+            optimizer.zero_grad(set_to_none=True)
+        return peak
+
+    base_peak = peak_bytes(base)
+    checkpointed_peak = peak_bytes(checkpointed)
+
+    assert checkpointed_peak < base_peak
 
 
 def test_hmc_smoke_run_outputs_valid_u2_configs() -> None:

@@ -2,6 +2,10 @@
 
 This is an append-only development history for NTHMC.
 
+## 2026-05-07
+
+- Added an opt-in U(2) training `--checkpoint_delta` mode that activation-checkpoints `compute_delta` to reduce peak GPU memory while preserving the exact training loss and gradients.
+
 ## 2026-05-06
 
 - Reduced U(2) validation/diagnostic GPU memory use by disabling higher-order transformed-force graphs outside training steps and clearing optimizer gradients with `set_to_none=True`.
