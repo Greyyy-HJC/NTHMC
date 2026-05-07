@@ -456,9 +456,11 @@ def test_u2_transformed_force_decomposition_matches_compute_force() -> None:
     links = u2_exp(0.2 * torch.randn(1, 2, 2, 2, 4))
 
     force = transform.compute_force(links, beta=2.0, transformed=True)
+    single_force = transform.compute_transformed_force(links, beta=2.0)
     total_force, action_force, jac_force, jac_logdet = transform.compute_transformed_force_terms(links, beta=2.0)
 
     assert torch.allclose(total_force, force, rtol=1e-5, atol=1e-6)
+    assert torch.allclose(single_force, force, rtol=1e-5, atol=1e-6)
     assert torch.allclose(total_force, action_force - jac_force, rtol=1e-5, atol=1e-6)
     assert torch.isfinite(jac_logdet).all()
 

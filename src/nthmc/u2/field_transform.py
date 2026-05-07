@@ -848,6 +848,25 @@ class FieldTransformation:
             total_action = self.compute_action_compiled(varied_links, beta)
         return torch.autograd.grad(total_action.sum(), algebra, create_graph=True)[0]
 
+    def compute_transformed_force(
+        self,
+        links: torch.Tensor,
+        beta: float,
+        *,
+        create_graph: bool = True,
+    ) -> torch.Tensor:
+        algebra = torch.zeros(
+            (*links.shape[:-1], 4),
+            device=self.device,
+            dtype=links.dtype,
+            requires_grad=True,
+        )
+        varied_links = u2_mul(u2_exp(algebra), links.detach())
+        links_ori = self.forward_compiled(varied_links)
+        jac_logdet = self.compute_jac_logdet_compiled(varied_links)
+        total_action = self.compute_action_compiled(links_ori, beta) - jac_logdet
+        return torch.autograd.grad(total_action.sum(), algebra, create_graph=create_graph)[0]
+
     def compute_transformed_force_terms(
         self,
         links: torch.Tensor,
@@ -883,7 +902,7 @@ class FieldTransformation:
         if self.train_beta is None:
             raise RuntimeError("train_beta is not set")
         links_new = self.inverse(links_ori)
-        force_new, _, _, _ = self.compute_transformed_force_terms(
+        force_new = self.compute_transformed_force(
             links_new,
             self.train_beta,
             create_graph=create_graph,
