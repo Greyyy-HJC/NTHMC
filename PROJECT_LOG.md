@@ -2,6 +2,10 @@
 
 This is an append-only development history for NTHMC.
 
+## 2026-05-09
+
+- Renamed 2du2 `model_training/plots` training-loss PDFs from the `cnn_loss_train_*` prefix to `debug_loss_train_*` for consistency with debug submission artifacts.
+
 ## 2026-05-07
 
 - Added an opt-in U(2) training `--checkpoint_delta` mode that activation-checkpoints `compute_delta` to reduce peak GPU memory while preserving the exact training loss and gradients.
