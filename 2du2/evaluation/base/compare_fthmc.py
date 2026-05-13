@@ -79,7 +79,7 @@ def main() -> None:
         model_dir=model_dir,
         plot_dir=plot_dir,
         dump_dir=dump_dir,
-        compile_enabled=False,
+        compile_enabled=False, # for lazy compile
     )
 
     model_load_start = time.time()

@@ -161,7 +161,7 @@ class FieldTransformation:
             self.print("torch.compile not available; using standard functions")
             return
 
-        compile_options = {"backend": self.backend, "fullgraph": False, "dynamic": True}
+        compile_options = {"backend": self.backend, "fullgraph": False, "dynamic": False}
         try:
             self.compute_delta_compiled = torch.compile(self.compute_delta, **compile_options)
             self.ft_phase_compiled = torch.compile(self.ft_phase, **compile_options)

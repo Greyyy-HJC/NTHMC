@@ -2,6 +2,10 @@
 
 This is an append-only development history for NTHMC.
 
+## 2026-05-12
+
+- Set `dynamic=False` in `src/nthmc/u2/field_transform.py` compile options because `dynamic=True` repeatedly triggered `torch/utils/_sympy/interp.py` `pow_by_natural` warnings and substantially increased compile time during U(2) runs.
+
 ## 2026-05-09
 
 - Renamed 2du2 `model_training/plots` training-loss PDFs from the `cnn_loss_train_*` prefix to `debug_loss_train_*` for consistency with debug submission artifacts.
