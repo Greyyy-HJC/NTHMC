@@ -1,0 +1,1068 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Details of Field Transformation: 2D U(1) vs 2D U(2) | NTHMC</title>
+  <script>
+    window.MathJax = {
+      tex: {
+        inlineMath: [['\\(', '\\)'], ['$', '$']],
+        displayMath: [['\\[', '\\]'], ['$$', '$$']],
+        processEscapes: true,
+        tags: 'none'
+      },
+      options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'] }
+    };
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f3ed;
+      --paper: #fffdf8;
+      --ink: #202124;
+      --muted: #62676f;
+      --line: #ded8ce;
+      --accent: #146c6c;
+      --accent-dark: #0b4748;
+      --accent-soft: #d9eeee;
+      --rust: #a24f2b;
+      --gold: #b68619;
+      --code-bg: #f0eee8;
+      --shadow: 0 18px 50px rgba(40, 37, 31, 0.10);
+      --radius: 8px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(180deg, rgba(20, 108, 108, 0.10), rgba(20, 108, 108, 0) 320px),
+        var(--bg);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.68;
+    }
+
+    a { color: var(--accent-dark); text-decoration-thickness: 0.08em; text-underline-offset: 0.18em; }
+    a:hover { color: var(--rust); }
+
+    .hero {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 56px 24px 28px;
+    }
+
+    .eyebrow {
+      margin: 0 0 14px;
+      color: var(--accent-dark);
+      font-size: 0.78rem;
+      font-weight: 750;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      max-width: 900px;
+      margin: 0;
+      font-size: clamp(2.2rem, 4.8vw, 4.8rem);
+      line-height: 1.02;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      max-width: 780px;
+      margin: 20px 0 0;
+      color: var(--muted);
+      font-size: 1.08rem;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 28px;
+    }
+
+    .summary-card {
+      min-height: 118px;
+      padding: 18px;
+      border: 1px solid rgba(20, 108, 108, 0.20);
+      border-radius: var(--radius);
+      background: rgba(255, 253, 248, 0.78);
+      box-shadow: 0 8px 24px rgba(40, 37, 31, 0.06);
+    }
+
+    .summary-card strong { display: block; margin-bottom: 8px; color: var(--accent-dark); }
+    .summary-card span { color: var(--muted); font-size: 0.93rem; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(220px, 290px) minmax(0, 860px);
+      gap: 34px;
+      align-items: start;
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 20px 24px 72px;
+    }
+
+    .toc {
+      position: sticky;
+      top: 18px;
+      max-height: calc(100vh - 36px);
+      overflow: auto;
+      padding: 18px 16px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255, 253, 248, 0.84);
+      box-shadow: var(--shadow);
+    }
+
+    .toc-title {
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 750;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .toc a {
+      display: block;
+      padding: 6px 0;
+      border-top: 1px solid rgba(222, 216, 206, 0.6);
+      color: var(--muted);
+      font-size: 0.9rem;
+      line-height: 1.35;
+      text-decoration: none;
+    }
+
+    .toc a:hover { color: var(--accent-dark); }
+    .toc-level-3 { padding-left: 14px !important; font-size: 0.84rem !important; }
+    .toc-level-4 { padding-left: 26px !important; font-size: 0.8rem !important; }
+
+    article {
+      padding: 34px clamp(18px, 4vw, 48px) 46px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+
+    article > *:first-child { margin-top: 0; }
+
+    h2, h3 {
+      margin: 2.2em 0 0.65em;
+      line-height: 1.18;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      padding-top: 0.35em;
+      border-top: 2px solid var(--accent-soft);
+      color: var(--accent-dark);
+      font-size: clamp(1.45rem, 2.4vw, 2.1rem);
+    }
+
+    h2.source-title { border-top: 0; margin-top: 0; color: var(--ink); }
+
+    h3 {
+      color: var(--rust);
+      font-size: clamp(1.12rem, 1.7vw, 1.36rem);
+    }
+
+    p, li { font-size: 1rem; }
+    p { margin: 0.85em 0; }
+    ul { margin: 0.8em 0 1.05em 1.15em; padding: 0; }
+    li { margin: 0.42em 0; padding-left: 0.18em; }
+    li::marker { color: var(--gold); }
+
+    hr {
+      margin: 2.2rem 0;
+      border: 0;
+      border-top: 1px solid var(--line);
+    }
+
+    code {
+      padding: 0.12em 0.34em;
+      border-radius: 5px;
+      background: var(--code-bg);
+      color: #6c331d;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 0.91em;
+      white-space: nowrap;
+    }
+
+    pre {
+      overflow-x: auto;
+      margin: 1.1em 0;
+      padding: 15px 16px;
+      border: 1px solid #d8d2c8;
+      border-radius: var(--radius);
+      background: #252a2e;
+      color: #f4f1e8;
+      line-height: 1.45;
+    }
+
+    pre code {
+      padding: 0;
+      background: transparent;
+      color: inherit;
+      white-space: pre;
+      font-size: 0.88rem;
+    }
+
+    .math-block {
+      overflow-x: auto;
+      margin: 1.05em 0;
+      padding: 0.15em 0;
+    }
+
+    mjx-container[jax="CHTML"][display="true"] {
+      overflow-x: auto;
+      overflow-y: hidden;
+      max-width: 100%;
+      padding: 0.2em 0;
+    }
+
+    .callout {
+      margin: 1.4rem 0 1.8rem;
+      padding: 16px 18px;
+      border-left: 4px solid var(--accent);
+      border-radius: var(--radius);
+      background: var(--accent-soft);
+      color: #173f3f;
+    }
+
+    .callout strong { color: var(--accent-dark); }
+
+    @media (max-width: 920px) {
+      .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .layout { grid-template-columns: 1fr; }
+      .toc { position: relative; top: auto; max-height: none; }
+    }
+
+    @media (max-width: 560px) {
+      .hero { padding: 38px 16px 18px; }
+      .layout { padding: 14px 16px 48px; }
+      .summary-grid { grid-template-columns: 1fr; }
+      article { padding: 24px 16px 34px; }
+      code { white-space: normal; overflow-wrap: anywhere; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <p class="eyebrow">NTHMC presentation note</p>
+    <h1>Details of Field Transformation: 2D U(1) vs 2D U(2)</h1>
+    <p class="subtitle">A readable reference for the U(1) and U(2) neural field transformations, gauge covariance, Wilson actions, topology, and Jacobians implemented in NTHMC.</p>
+    <div class="summary-grid" aria-label="Document highlights">
+      <div class="summary-card"><strong>Representations</strong><span>U(1) compact angles and U(2) split phase-quaternion storage.</span></div>
+      <div class="summary-card"><strong>Actions & topology</strong><span>Wilson normalization, beta matching, and determinant-phase charge definitions.</span></div>
+      <div class="summary-card"><strong>Gauge covariance</strong><span>Why Abelian scalar loops and non-Abelian active-site loop frames differ.</span></div>
+      <div class="summary-card"><strong>Jacobians</strong><span>Scalar U(1) factors and exact 4x4 U(2) active-link tangent blocks.</span></div>
+    </div>
+  </header>
+  <main class="layout">
+    <nav class="toc" aria-label="Table of contents">
+      <p class="toc-title">Contents</p>
+      <a class="toc-level-2" href="#representation-of-u-2">Representation of U(2)</a>
+      <a class="toc-level-2" href="#wilson-actions-implemented-in-code">Wilson Actions Implemented In Code</a>
+      <a class="toc-level-3" href="#u-1-and-u-2-beta-normalization">U(1) and U(2) beta normalization</a>
+      <a class="toc-level-2" href="#topological-charge-definitions">Topological charge definitions</a>
+      <a class="toc-level-2" href="#gauge-covariance-of-field-transformation">Gauge Covariance of Field Transformation</a>
+      <a class="toc-level-3" href="#why-broken-gauge-symmetry-can-damage-training">Why broken gauge symmetry can damage training</a>
+      <a class="toc-level-2" href="#u-1-field-transformation">U(1) Field Transformation</a>
+      <a class="toc-level-3" href="#subset-update">Subset update</a>
+      <a class="toc-level-3" href="#input-output-of-cnn">Input &amp; Output of CNN</a>
+      <a class="toc-level-3" href="#transformation">Transformation</a>
+      <a class="toc-level-3" href="#jacobian">Jacobian</a>
+      <a class="toc-level-2" href="#u-2-field-transformation">U(2) Field Transformation</a>
+      <a class="toc-level-3" href="#subset-update-2">Subset update</a>
+      <a class="toc-level-3" href="#input-output-of-cnn-2">Input &amp; Output of CNN</a>
+      <a class="toc-level-3" href="#transformation-2">Transformation</a>
+      <a class="toc-level-3" href="#jacobian-2">Jacobian</a>
+      <a class="toc-level-2" href="#summary">Summary</a>
+    </nav>
+    <article>
+      <div class="callout"><strong>Reading guide.</strong> This page preserves the full Markdown derivation and adds navigation, typography, and MathJax rendering for easier review in a browser.</div>
+      <h2 id="details-of-field-transformation-2d-u-1-vs-2d-u-2" class="source-title">Details of Field Transformation: 2D U(1) vs 2D U(2)</h2>
+      <p>This note documents the field transformations implemented in:</p>
+      <ul>
+        <li><code>src/nthmc/u1/field_transform.py</code></li>
+        <li><code>src/nthmc/u2/field_transform.py</code></li>
+        <li><code>src/nthmc/u1/models.py</code></li>
+        <li><code>src/nthmc/u2/models.py</code></li>
+      </ul>
+      <hr>
+      <h2 id="representation-of-u-2">Representation of U(2)</h2>
+      <div class="math-block">\[U = (\phi, q), \quad q \in SU(2)\]</div>
+      <p>This is the split representation used by the current <code>src/nthmc/u2</code> code. Each link is stored as a real tensor with last dimension 5:</p>
+      <div class="math-block">\[U_{x,\mu}
+\leftrightarrow
+(\phi_{x,\mu}, q_{0,x,\mu}, q_{1,x,\mu}, q_{2,x,\mu}, q_{3,x,\mu}),
+\qquad
+q_0^2+q_1^2+q_2^2+q_3^2=1.\]</div>
+      <p>The corresponding complex matrix is</p>
+      <div class="math-block">\[U
+=
+e^{i\phi}
+\begin{pmatrix}
+q_0+i q_3 &amp; q_2+i q_1 \\
+-q_2+i q_1 &amp; q_0-i q_3
+\end{pmatrix}.\]</div>
+      <p>Thus the U(2) degree of freedom is handled as a central U(1) phase times an SU(2) unit quaternion. In group operations, the code keeps these two parts separate:</p>
+      <ul>
+        <li><code>u2_normalize</code> wraps \(\phi\) to \([-\pi,\pi)\) and normalizes \(q\).</li>
+        <li><code>u2_mul</code> adds the U(1) phases and multiplies the SU(2) quaternions.</li>
+        <li><code>u2_conj</code> negates the phase and quaternion-conjugates the SU(2) part.</li>
+        <li><code>u2_exp</code> maps four real algebra coefficients to \((\phi,\exp_{SU(2)} a)\), with one central phase direction and three traceless SU(2) directions.</li>
+      </ul>
+      <p>Equivalently, the tangent algebra used by HMC and the field transform is represented as</p>
+      <div class="math-block">\[u(2) \simeq u(1)\oplus su(2),
+\qquad
+\Delta = (\Delta_\phi,\Delta_1,\Delta_2,\Delta_3).\]</div>
+      <p>The matrix-to-split conversion follows the same convention:</p>
+      <div class="math-block">\[\phi = \frac{1}{2}\arg\det U,
+\qquad
+q = e^{-i\phi}U \in SU(2),\]</div>
+      <p>then the SU(2) matrix is converted to the quaternion components above. Because \(U(2)\simeq (U(1)\times SU(2))/\mathbb{Z}_2\), this split is a coordinate convention with the usual sign/phase identification; the code fixes a representative by wrapping the phase and normalizing the quaternion.</p>
+      <hr>
+      <h2 id="wilson-actions-implemented-in-code">Wilson Actions Implemented In Code</h2>
+      <p>The current U(1) HMC code stores each link as one compact angle \(\theta_{x,\mu}\). The plaquette angle implemented by <code>src/nthmc/u1/u1_observables.py::plaq_from_field</code> is</p>
+      <div class="math-block">\[\theta_p(x)
+=
+\theta_{x,0}
+-
+\theta_{x,1}
+-
+\theta_{x+\hat 1,0}
++
+\theta_{x+\hat 0,1}.\]</div>
+      <p>The action used by <code>src/nthmc/u1/u1_hmc.py::HMCU1.action</code> is</p>
+      <div class="math-block">\[S_{U(1)}(\theta)
+=
+-\beta\sum_x \cos\theta_p(x).\]</div>
+      <p>This is equivalent for HMC dynamics to the usual Wilson form</p>
+      <div class="math-block">\[S_{U(1)}(\theta)
+=
+\beta\sum_x\left[1-\cos\theta_p(x)\right],\]</div>
+      <p>because the two differ only by the constant \(\beta V\).</p>
+      <p>The current U(2) code stores each link in the split representation</p>
+      <div class="math-block">\[U_{x,\mu}=e^{i\phi_{x,\mu}}q_{x,\mu},
+\qquad
+q_{x,\mu}\in SU(2),\]</div>
+      <p>where \(q=(q_0,q_1,q_2,q_3)\) is a unit quaternion. The plaquette matrix implemented by <code>src/nthmc/u2/u2_observables.py::plaquette_from_field_batch</code> has the same lattice orientation as the U(1) plaquette:</p>
+      <div class="math-block">\[P_{x,01}
+=
+U_{x,0}
+U_{x+\hat 0,1}
+U_{x+\hat 1,0}^\dagger
+U_{x,1}^\dagger.\]</div>
+      <p>In split form, the plaquette is stored as</p>
+      <div class="math-block">\[P_{x,01}=e^{i\phi_p(x)}q_p(x),
+\qquad
+q_p=(q_{0,p},q_{1,p},q_{2,p},q_{3,p}).\]</div>
+      <p>The normalized plaquette used by <code>src/nthmc/u2/u2_observables.py::plaquette_mean_from_field_batch</code> is</p>
+      <div class="math-block">\[\frac{1}{2}\mathrm{ReTr}\,P_{x,01}
+=
+q_{0,p}(x)\cos\phi_p(x).\]</div>
+      <p>This is exactly the code expression</p>
+      <pre><code class="language-python">torch.cos(plaquettes[..., 0]) * plaquettes[..., 1]</code></pre>
+      <p>because <code>plaquettes[..., 0]</code> is the U(1) phase \(\phi_p\) and <code>plaquettes[..., 1]</code> is the scalar quaternion component \(q_{0,p}\).</p>
+      <p>Therefore <code>src/nthmc/u2/u2_observables.py::action_from_field_batch</code> computes</p>
+      <div class="math-block">\[S_{U(2)}(U)
+=
+\beta V
+\left[
+1
+-
+\frac{1}{V}\sum_x
+q_{0,p}(x)\cos\phi_p(x)
+\right],\]</div>
+      <p>or equivalently</p>
+      <div class="math-block">\[S_{U(2)}(U)
+=
+\beta\sum_x
+\left[
+1-\frac{1}{2}\mathrm{ReTr}\,P_{x,01}
+\right].\]</div>
+      <p>Thus the extra factor <code>plaquettes[..., 1]</code> is not an additional ad hoc interaction. It is the SU(2) trace contribution required by the U(2) Wilson action in the split \(U(1)\times SU(2)\) coordinate convention.</p>
+      <h3 id="u-1-and-u-2-beta-normalization">U(1) and U(2) beta normalization</h3>
+      <p>The numerical value of \(\beta\) in the U(1) action and the U(2) action should not be compared as the same effective coupling. The U(1) plaquette angle appears as</p>
+      <div class="math-block">\[S_{U(1)}
+=
+\beta_{U(1)}\sum_x\left[1-\cos\theta_p(x)\right].\]</div>
+      <p>For small plaquette angles,</p>
+      <div class="math-block">\[1-\cos\theta_p
+=
+\frac{1}{2}\theta_p^2+O(\theta_p^4),\]</div>
+      <p>so the quadratic U(1) action is</p>
+      <div class="math-block">\[S_{U(1)}
+\simeq
+\frac{\beta_{U(1)}}{2}\sum_x\theta_p(x)^2.\]</div>
+      <p>For U(2), write the plaquette as</p>
+      <div class="math-block">\[P_x=e^{i\phi_p(x)}q_p(x),
+\qquad
+q_p=\exp_{SU(2)}(i a_p^b\sigma_b).\]</div>
+      <p>The determinant phase used by the U(2) topological charge is</p>
+      <div class="math-block">\[\alpha_p(x)=\arg\det P_x=2\phi_p(x),\]</div>
+      <p>because \(\det q_p=1\). For topological-freezing comparisons, \(\alpha_p\) is the U(2) variable to align with the U(1) plaquette angle \(\theta_p\), because both topological charges are built from the wrapped compact phase summed over plaquettes. Expanding the normalized trace near the identity gives</p>
+      <div class="math-block">\[1-\frac{1}{2}\mathrm{ReTr}\,P_x
+=
+1-q_{0,p}\cos\phi_p
+\simeq
+\frac{1}{2}\phi_p^2
++
+\frac{1}{2}|a_p|^2.\]</div>
+      <p>The part controlling the determinant U(1) phase is therefore</p>
+      <div class="math-block">\[\frac{\beta_{U(2)}}{2}\phi_p^2
+=
+\frac{\beta_{U(2)}}{8}\alpha_p^2.\]</div>
+      <p>Matching this quadratic coefficient to the U(1) action \(\frac{\beta_{U(1)}}{2}\theta_p^2\) with \(\theta_p\) identified with the determinant phase \(\alpha_p\) gives the rough determinant-sector relation</p>
+      <div class="math-block">\[\frac{\beta_{U(2)}}{8}
+\approx
+\frac{\beta_{U(1)}}{2},
+\qquad\text{or}\qquad
+\beta_{U(2)}
+\approx
+4\beta_{U(1)}.\]</div>
+      <p>This is only a normalization guide, not an exact equality of the two theories. The U(2) theory also has the three traceless SU(2) plaquette directions, and topological freezing depends on the full dynamics and the chosen HMC integrator. Still, for determinant-topology comparisons, a U(2) run at \(\beta_{U(2)}\) is more naturally compared to a U(1) run at the effective value</p>
+      <div class="math-block">\[\beta_{\mathrm{det,eff}}
+\equiv
+\frac{\beta_{U(2)}}{4}.\]</div>
+      <hr>
+      <h2 id="topological-charge-definitions">Topological charge definitions</h2>
+      <p>The current 2du1 implementation uses the compact U(1) plaquette angle</p>
+      <div class="math-block">\[\theta_p(x)
+=
+\mathrm{wrap}_{[-\pi,\pi)}
+\left[
+\theta_{x,0}
+-
+\theta_{x,1}
+-
+\theta_{x+\hat 1,0}
++
+\theta_{x+\hat 0,1}
+\right],\]</div>
+      <p>and records the integer-valued topological charge</p>
+      <div class="math-block">\[Q_{\mathrm{2du1}}
+=
+\left\lfloor
+0.1
++
+\frac{1}{2\pi}\sum_x \theta_p(x)
+\right\rfloor .\]</div>
+      <p>The current 2du2 implementation forms the U(2) plaquette matrix in the same lattice orientation,</p>
+      <div class="math-block">\[P_{x,01}
+=
+U_{x,0}
+U_{x+\hat 0,1}
+U_{x+\hat 1,0}^\dagger
+U_{x,1}^\dagger,\]</div>
+      <p>then uses the determinant phase:</p>
+      <div class="math-block">\[\alpha_p(x)
+=
+\mathrm{wrap}_{[-\pi,\pi)}
+\left[
+\arg\det P_{x,01}
+\right].\]</div>
+      <p>In the split U(2) representation used by the code, \(U=e^{i\phi}q\) with \(q\in SU(2)\), so \(\arg\det P_{x,01}=2\phi_p(x)\). Therefore the recorded topological charge is</p>
+      <div class="math-block">\[Q_{\mathrm{2du2}}
+=
+\left\lfloor
+0.1
++
+\frac{1}{2\pi}\sum_x \alpha_p(x)
+\right\rfloor .\]</div>
+      <p>The small \(0.1\) offset is part of the current implementation's integer rounding convention.</p>
+      <hr>
+      <h2 id="gauge-covariance-of-field-transformation">Gauge Covariance of Field Transformation</h2>
+      <p>Gauge transformation:</p>
+      <div class="math-block">\[U_{x,\mu} \rightarrow U^G_{x,\mu} \equiv G_x U_{x,\mu} G_{x+\hat\mu}^\dagger .\]</div>
+      <p>A gauge-covariant field transformation \(F\) should satisfy:</p>
+      <div class="math-block">\[F(U^G) = F(U)^G .\]</div>
+      <p>For Abelian groups like U(1), this requirement is straightforward to preserve with ordinary scalar loop features. A closed U(1) Wilson loop is a phase \(C_x=e^{i\theta_x}\), and because all group elements commute, the gauge factors cancel around the loop. Therefore the loop angle \(\theta_x\), and features such as \(\sin\theta_x\) and \(\cos\theta_x\), are gauge-invariant scalars. Feeding these scalar channels to an ordinary CNN does not introduce a local gauge-frame dependence.</p>
+      <p>For non-Abelian groups, this statement is not enough by itself. A closed loop matrix based at site \(x\) transforms by conjugation:</p>
+      <div class="math-block">\[C_x \rightarrow G_x C_x G_x^\dagger ,\]</div>
+      <p>so its trace-like scalar features are gauge invariant, but its traceless color components are only gauge covariant in the color frame at the loop base point. In the split U(2) representation, this is the distinction between trace-like quantities such as \(q_0\cos\phi\) and \(q_0\sin\phi\), which are scalars, and traceless color-vector quantities such as \((q_1,q_2,q_3)\), which rotate under the local adjoint action of \(G_x\).</p>
+      <p>Therefore, gauge-invariant inputs in U(2) for the CNN should be built from closed-loop matrix invariants. For a closed loop</p>
+      <div class="math-block">\[C=e^{i\phi}q,
+\qquad
+q=q_0I+i\sum_{a=1}^3q_a\sigma_a\in SU(2),\]</div>
+      <p>use scalar quantities such as</p>
+      <div class="math-block">\[\mathrm{ReTr}\,C=2q_0\cos\phi,
+\qquad
+\mathrm{ImTr}\,C=2q_0\sin\phi.\]</div>
+      <p>The determinant is also gauge invariant:</p>
+      <div class="math-block">\[\det C=e^{2i\phi},
+\qquad
+\mathrm{Re}\det C=\cos(2\phi),
+\qquad
+\mathrm{Im}\det C=\sin(2\phi).\]</div>
+      <p>More generally,</p>
+      <div class="math-block">\[\mathrm{Tr}\,C^n
+=
+2e^{in\phi}T_n(q_0),\]</div>
+      <p>where \(T_n\) is the Chebyshev polynomial defined by \(T_n(\cos\alpha)=\cos(n\alpha)\). Equivalently,</p>
+      <div class="math-block">\[\mathrm{ReTr}\,C^n
+=
+2T_n(q_0)\cos(n\phi),
+\qquad
+\mathrm{ImTr}\,C^n
+=
+2T_n(q_0)\sin(n\phi).\]</div>
+      <p>For example,</p>
+      <div class="math-block">\[\mathrm{Tr}\,C^2=2e^{2i\phi}(2q_0^2-1),
+\qquad
+\mathrm{Tr}\,C^3=2e^{3i\phi}(4q_0^3-3q_0).\]</div>
+      <h3 id="why-broken-gauge-symmetry-can-damage-training">Why broken gauge symmetry can damage training</h3>
+      <p>The target Wilson action is gauge invariant, so it is constant along each gauge orbit. A gauge-covariant field transform preserves this structure: the transformed potential</p>
+      <div class="math-block">\[S(F(U))-\log|\det J(U)|\]</div>
+      <p>is also gauge invariant.</p>
+      <p>If the learned transform is not gauge covariant, the transformed potential can vary along pure-gauge directions. This creates several training problems:</p>
+      <ul>
+        <li>The force loss can reward cancellation patterns that depend on an arbitrary gauge frame rather than on physical gauge-invariant structure.</li>
+        <li>The Jacobian force can acquire components along gauge-orbit directions even though the target action has no physical restoring force there.</li>
+        <li>Gauge-equivalent configurations can produce different CNN coefficients, making the loss noisier and harder to optimize.</li>
+        <li>The network can reduce the local training objective by creating gauge-frame dependent Jacobian structure, but this need not improve FT-HMC acceptance because the proposal then sees artificial gauge-orbit roughness.</li>
+      </ul>
+      <p>This explains why the U(2) loss can behave differently from U(1) under similar settings. In U(1), loop features are Abelian scalar angles. In U(2), untransported traceless loop components carry local color-frame information, so treating them as ordinary scalar CNN channels can break the symmetry that the HMC target distribution has.</p>
+      <hr>
+      <h2 id="u-1-field-transformation">U(1) Field Transformation</h2>
+      <p>For U(1), each link is represented by a compact angle</p>
+      <div class="math-block">\[U_{x,\mu}=e^{i\theta_{x,\mu}}.\]</div>
+      <p>The field transformation is a phase shift:</p>
+      <div class="math-block">\[\theta'_{x,\mu}
+=
+\theta_{x,\mu}
++
+\Delta\theta_{x,\mu}(\theta),
+\qquad
+U'_{x,\mu}
+=
+e^{i\Delta\theta_{x,\mu}(\theta)}U_{x,\mu}.\]</div>
+      <h3 id="subset-update">Subset update</h3>
+      <p>Links are partitioned into 8 disjoint subsets and updated sequentially. The subset label is</p>
+      <div class="math-block">\[s=(\mu,\ x\bmod 2,\ y\bmod 2),
+\qquad
+\mu\in\{0,1\}.\]</div>
+      <p>For subset \(s\), only the active links selected by <code>get_field_mask(s, ...)</code> are changed:</p>
+      <div class="math-block">\[\theta^{(s+1)}_\ell
+=
+\theta^{(s)}_\ell
++
+M^{(s)}_\ell\Delta\theta^{(s)}_\ell(\theta^{(s)}),
+\qquad
+\ell=(x,\mu),\]</div>
+      <p>where \(M^{(s)}_\ell\in\{0,1\}\) is the active-link mask. The full transform is the composition of the 8 subset maps:</p>
+      <div class="math-block">\[F = F_7\circ F_6\circ\cdots\circ F_0.\]</div>
+      <p>Within one subset, active links are independent because the CNN inputs are masked so they do not depend on the active subset. Therefore each subset Jacobian factorizes into scalar active-link Jacobians.</p>
+      <h3 id="input-output-of-cnn">Input &amp; Output of CNN</h3>
+      <p>For each subset, first compute the plaquette angle field \(p_x\) and the two rectangle-angle fields \(r^{(0)}_x,r^{(1)}_x\):</p>
+      <div class="math-block">\[\mathrm{plaq}=\texttt{plaq\_from\_field\_batch}(\theta),
+\qquad
+\mathrm{rect}=\texttt{rect\_from\_field\_batch}(\theta).\]</div>
+      <p>The model input is built in <code>compute_k0_k1</code> from masked loop features:</p>
+      <div class="math-block">\[\texttt{plaq\_features}
+=
+(\sin p,\cos p),
+\qquad
+\texttt{rect\_features}
+=
+(\sin r^{(0)},\sin r^{(1)},\cos r^{(0)},\cos r^{(1)}).\]</div>
+      <p>The model returns</p>
+      <div class="math-block">\[k^{(p)}\in\mathbb{R}^{8},
+\qquad
+k^{(r)}\in\mathbb{R}^{16}\]</div>
+      <p>per lattice site. The CNN channel summary is:</p>
+      <ul>
+        <li>input plaquette channels: 2, given by \((\sin p,\cos p)\).</li>
+        <li>input rectangle channels: 4, given by \((\sin r^{(0)},\sin r^{(1)},\cos r^{(0)},\cos r^{(1)})\).</li>
+        <li>output plaquette channels: 8, with 4 sin coefficients followed by 4 cos coefficients. The 4 plaquette coefficient slots cover both link directions: 2 stack entries for \(\mu=0\) and 2 stack entries for \(\mu=1\).</li>
+        <li>output rectangle channels: 16, with 8 sin coefficients followed by 8 cos coefficients. The 8 rectangle coefficient slots also cover both link directions: 4 stack entries for \(\mu=0\) and 4 stack entries for \(\mu=1\).</li>
+      </ul>
+      <h3 id="transformation">Transformation</h3>
+      <p>For one active link \(\ell=(x,\mu)\), let \(l\) label one oriented Wilson loop touching that link. The loop index runs over the attached \(1\times1\) plaquettes and \(1\times2\) rectangles:</p>
+      <div class="math-block">\[l\in P(\ell)\cup R(\ell),
+\qquad
+|P(\ell)|=2,
+\qquad
+|R(\ell)|=4.\]</div>
+      <p>The loop angles are stored in shifted stacks:</p>
+      <ul>
+        <li>two plaquette angles for each link direction, selected from the 4-channel <code>plaq_angles</code> stack.</li>
+        <li>four rectangle angles for each link direction, selected from the 8-channel <code>rect_angles</code> stack.</li>
+      </ul>
+      <p>Let \(a_l\) denote the selected loop angle:</p>
+      <div class="math-block">\[a_l(\theta)
+=
+\begin{cases}
+\text{the selected entry of } \texttt{\_plaq\_angle\_stack}(\mathrm{plaq}),
+&amp; l\in P(\ell),\\
+\text{the selected entry of } \texttt{\_rect\_angle\_stack}(\mathrm{rect}),
+&amp; l\in R(\ell).
+\end{cases}\]</div>
+      <p>For link direction \(\mu=0\), the active update uses plaquette stack channels \(0,1\) and rectangle stack channels \(0,1,2,3\). For link direction \(\mu=1\), it uses plaquette stack channels \(2,3\) and rectangle stack channels \(4,5,6,7\).</p>
+      <p>The orientation signs are</p>
+      <div class="math-block">\[\sigma^{(p)}=(-1,+1,+1,-1),
+\qquad
+\sigma^{(r)}=(-1,+1,-1,+1,+1,-1,+1,-1).\]</div>
+      <p>The phase shift is</p>
+      <div class="math-block">\[\Delta\theta_\ell
+=
+\sum_{l\in P(\ell)}
+\sigma_l
+\left[
+k^{(p,\sin)}_l\sin a_l
+-
+k^{(p,\cos)}_l\cos a_l
+\right]
++
+\sum_{l\in R(\ell)}
+\sigma_l
+\left[
+k^{(r,\sin)}_l\sin a_l
+-
+k^{(r,\cos)}_l\cos a_l
+\right].\]</div>
+      <p>This formula includes both the sine channels and the optional cos channels. When the cos channels are zero, it reduces to the sine-only transformation.</p>
+      <h3 id="jacobian">Jacobian</h3>
+      <p>For the local Jacobian, the coefficients are treated as independent of the active link within the current subset, because the CNN inputs are masked before the active links are updated. Since</p>
+      <div class="math-block">\[\frac{\partial a_l}{\partial\theta_\ell}=-\sigma_l,\]</div>
+      <p>the active-link scalar Jacobian is</p>
+      <div class="math-block">\[J_\ell
+=
+\frac{\partial\theta'_\ell}{\partial\theta_\ell}
+=
+1
+-
+\sum_{l\in P(\ell)}
+\left[
+k^{(p,\sin)}_l\cos a_l
++
+k^{(p,\cos)}_l\sin a_l
+\right]
+-
+\sum_{l\in R(\ell)}
+\left[
+k^{(r,\sin)}_l\cos a_l
++
+k^{(r,\cos)}_l\sin a_l
+\right],\]</div>
+      <p>matching <code>_plaq_jac_shift</code> and <code>_rect_jac_shift</code>, where the Jacobian shift is built from the <code>[-cos(loop), -sin(loop)]</code> stack.</p>
+      <p>For the current bounded coefficient layout with cos terms, set</p>
+      <div class="math-block">\[c_{\rm plaq}=\frac15,
+\qquad
+c_{\rm rect}=\frac1{40}.\]</div>
+      <p>The strict <code>tanh</code> bounds give</p>
+      <div class="math-block">\[|k^{(p,\sin)}_l|,\ |k^{(p,\cos)}_l| &lt; c_{\rm plaq},
+\qquad
+|k^{(r,\sin)}_l|,\ |k^{(r,\cos)}_l| &lt; c_{\rm rect}.\]</div>
+      <p>Since \(|\sin a_l|\le1\) and \(|\cos a_l|\le1\),</p>
+      <div class="math-block">\[\left|
+k^{(p,\sin)}_l\cos a_l
++
+k^{(p,\cos)}_l\sin a_l
+\right|
+&lt;
+2c_{\rm plaq},\]</div>
+      <p>and similarly each rectangle contribution is strictly bounded by \(2c_{\rm rect}\). Each active link sees 2 plaquette loops and 4 rectangle loops, so</p>
+      <div class="math-block">\[\left|J_\ell-1\right|
+&lt;
+2(2c_{\rm plaq})+4(2c_{\rm rect})
+=
+4c_{\rm plaq}+8c_{\rm rect}
+=
+4\cdot\frac15+8\cdot\frac1{40}
+=
+1.\]</div>
+      <p>Therefore</p>
+      <div class="math-block">\[\boxed{J_\ell&gt;0}\]</div>
+      <p>for every active U(1) link in exact arithmetic. This is the explicit reason the current \(1/5\) and \(1/40\) coefficient boundaries make the scalar Jacobian positive even with cos channels.</p>
+      <p>The subset log determinant is therefore</p>
+      <div class="math-block">\[\log\det J_s
+=
+\sum_{\ell\in s}\log J_\ell,\]</div>
+      <p>which is the <code>torch.log(1 + plaq_jac_shift + rect_jac_shift)</code> expression in <code>compute_jac_logdet</code>.</p>
+      <hr>
+      <h2 id="u-2-field-transformation">U(2) Field Transformation</h2>
+      <p>For U(2), each link is represented in the split convention</p>
+      <div class="math-block">\[U_{x,\mu}=e^{i\phi_{x,\mu}}q_{x,\mu},
+\qquad
+q_{x,\mu}=q_0I+i\sum_{a=1}^3q_a\sigma_a\in SU(2).\]</div>
+      <p>The tangent update lives in</p>
+      <div class="math-block">\[u(2)\simeq u(1)\oplus su(2),
+\qquad
+\Delta_{x,\mu}
+=
+(\Delta_{\phi,x,\mu},\Delta_{1,x,\mu},
+\Delta_{2,x,\mu},\Delta_{3,x,\mu}).\]</div>
+      <p>The field transformation uses left multiplication:</p>
+      <div class="math-block">\[U'_{x,\mu}
+=
+\exp_{U(2)}(\Delta_{x,\mu}(U))\,U_{x,\mu}.\]</div>
+      <p>In the split storage this means</p>
+      <div class="math-block">\[\phi'_{x,\mu}
+=
+\phi_{x,\mu}+\Delta_{\phi,x,\mu},
+\qquad
+q'_{x,\mu}
+=
+\exp_{SU(2)}
+\!\left(\sum_{a=1}^3\Delta_{a,x,\mu}\,i\sigma_a\right)
+q_{x,\mu},\]</div>
+      <p>followed by phase wrapping and quaternion normalization in the implementation. For this update to be gauge covariant under</p>
+      <div class="math-block">\[U_{x,\mu}\rightarrow U^G_{x,\mu}
+=G_xU_{x,\mu}G_{x+\hat\mu}^\dagger,\]</div>
+      <p>the algebra update must transform in the site-\(x\) color frame:</p>
+      <div class="math-block">\[\Delta_{x,\mu}(U^G)
+=
+G_x \Delta_{x,\mu}(U) G_x^\dagger .\]</div>
+      <p>Equivalently, suppose the input field has already been gauge transformed,</p>
+      <div class="math-block">\[\widetilde U'_{x,\mu}
+=
+G_x\widetilde U_{x,\mu}G_{x+\hat\mu}^\dagger,\]</div>
+      <p>and the field transformation is applied by left multiplication:</p>
+      <div class="math-block">\[U_{x,\mu}
+=
+e^{\Delta_{x,\mu}}\widetilde U_{x,\mu},
+\qquad
+U'_{x,\mu}
+=
+e^{\Delta'_{x,\mu}}\widetilde U'_{x,\mu}.\]</div>
+      <p>Gauge covariance requires \(U'_{x,\mu}=G_xU_{x,\mu}G_{x+\hat\mu}^\dagger\). Substituting the left-multiplied update gives</p>
+      <div class="math-block">\[G_x e^{\Delta_{x,\mu}}\widetilde U_{x,\mu}
+G_{x+\hat\mu}^\dagger
+=
+e^{\Delta'_{x,\mu}}
+G_x\widetilde U_{x,\mu}G_{x+\hat\mu}^\dagger .\]</div>
+      <p>After canceling the common right factor, the required condition is</p>
+      <div class="math-block">\[G_x e^{\Delta_{x,\mu}}G_x^\dagger
+=
+e^{\Delta'_{x,\mu}},
+\qquad\text{so}\qquad
+\Delta'_{x,\mu}
+=
+G_x\Delta_{x,\mu}G_x^\dagger .\]</div>
+      <p>This fixes the gauge frame of every non-Abelian object used to build \(\Delta_{x,\mu}\). If a loop contribution uses the traceless components of a closed loop \(C_l\), then that loop must transform in the same site-\(x\) frame:</p>
+      <div class="math-block">\[C_l(U^G)=G_x C_l(U)G_x^\dagger .\]</div>
+      <p>Therefore each attached plaquette or rectangle in the \(\Delta_{x,\mu}\) loop stack must be written as a cyclic Wilson loop that starts and ends at the active link's starting site \(x\). A closed loop based at another site would rotate in a different local gauge frame, and its color-vector components could not be added directly to the left-multiplied update for \(U_{x,\mu}\).</p>
+      <h3 id="subset-update-2">Subset update</h3>
+      <p>The U(2) transform uses the same 8-subset link partition as U(1):</p>
+      <div class="math-block">\[s=(\mu,\ x\bmod 2,\ y\bmod 2),
+\qquad
+\mu\in\{0,1\}.\]</div>
+      <p>For subset \(s\), only the active links selected by the link mask are changed:</p>
+      <div class="math-block">\[U^{(s+1)}_\ell
+=
+\exp_{U(2)}
+\!\left(M^{(s)}_\ell\Delta^{(s)}_\ell(U^{(s)})\right)
+U^{(s)}_\ell,
+\qquad
+\ell=(x,\mu),\]</div>
+      <p>where \(M^{(s)}_\ell\in\{0,1\}\) is the active-link mask. The full transformation is the composition</p>
+      <div class="math-block">\[F = F_7\circ F_6\circ\cdots\circ F_0.\]</div>
+      <p>As in U(1), the loop inputs for one subset are masked so that the CNN coefficients depend only on frozen links, not on the active links in that subset:</p>
+      <div class="math-block">\[\frac{\partial k}{\partial U_{\mathrm{active}}}=0.\]</div>
+      <p>Therefore the local Jacobian derivatives come from the explicit loop factors inside the update, not from differentiating the CNN coefficients through the active links.</p>
+      <h3 id="input-output-of-cnn-2">Input &amp; Output of CNN</h3>
+      <p>For each subset, first compute the closed U(2) plaquette loops and the two closed rectangle-loop orientations:</p>
+      <div class="math-block">\[\mathrm{plaq}=\texttt{plaquette\_from\_field\_batch}(U),
+\qquad
+\mathrm{rect}=\texttt{rectangle\_from\_field\_batch}(U).\]</div>
+      <p>For U(2), the rectangle multiplication order is part of the definition: the product must be a closed non-Abelian Wilson loop. Unlike U(1), changing the order changes the matrix-valued loop.</p>
+      <p>These plaquette and rectangle tensors are used only to build the gauge-invariant scalar inputs for the CNN coefficients. The update \(\Delta_{x,\mu}\) is built from a separate attached loop stack, <code>_plaq_loop_stack(U)</code> and <code>_rect_loop_stack(U)</code>, whose entries are cyclically represented as Wilson loops based at the active link's site \(x\). This separation is harmless for the CNN inputs because their scalar traces and determinants do not depend on the loop base point, but it is required for the traceless components that enter \(\Delta_{x,\mu}\).</p>
+      <p>For a closed loop</p>
+      <div class="math-block">\[C=e^{i\phi}q,
+\qquad
+q=q_0I+i\sum_{a=1}^3q_a\sigma_a\in SU(2),\]</div>
+      <p>the ordinary CNN should receive only gauge-invariant scalar loop features. The U(2) scalar input for one loop is</p>
+      <div class="math-block">\[\left(
+q_0\cos\phi,
+q_0\sin\phi,
+\cos\phi,
+\sin\phi,
+2(2q_0^2-1)\cos(2\phi),
+2(2q_0^2-1)\sin(2\phi)
+\right).\]</div>
+      <p>The first two entries are trace-like phase features, the next two encode the central phase, and the final two are the real and imaginary parts of \(\mathrm{Tr}\,C^2\). With one plaquette orientation and two rectangle orientations, this gives 6 plaquette input channels and 12 rectangle input channels before the CNN combines them spatially.</p>
+      <p>The CNN output does not directly output \(\Delta\). It outputs scalar coefficient slots for the component-wise field transform. For each selected loop \(l\), the coefficient vector is</p>
+      <div class="math-block">\[k_l=(k_{l,0},k_{l,1},k_{l,2},k_{l,3}).\]</div>
+      <p>The coefficients are scalar fields computed from the invariant CNN inputs above. The CNN channel summary is:</p>
+      <ul>
+        <li>input plaquette channels: 6, one six-scalar feature vector for the plaquette loop.</li>
+        <li>input rectangle channels: 12, from 2 rectangle orientations times 6 scalar features.</li>
+        <li>output plaquette channels: 16, from 4 plaquette loops times 4 coefficient slots. The 4 plaquette loop slots cover both link directions: 2 for \(\mu=0\) and 2 for \(\mu=1\).</li>
+        <li>output rectangle channels: 32, from 8 rectangle loops times 4 coefficient slots. The 8 rectangle loop slots cover both link directions: 4 for \(\mu=0\) and 4 for \(\mu=1\).</li>
+      </ul>
+      <h3 id="transformation-2">Transformation</h3>
+      <p>For one active link \(\ell=(x,\mu)\), let \(l\) label one oriented closed loop touching that link:</p>
+      <div class="math-block">\[l\in P(\ell)\cup R(\ell),
+\qquad
+|P(\ell)|=2,
+\qquad
+|R(\ell)|=4.\]</div>
+      <p>The 4 plaquette and 8 rectangle output-loop slots are the full stack layout for both link directions. A fixed active link direction uses only the corresponding half of those slots, which is why a single link has \(|P(\ell)|=2\) and \(|R(\ell)|=4\). For link direction \(\mu=0\), the active update uses the two plaquette stack entries associated with direction 0 and the four rectangle stack entries associated with direction 0. For \(\mu=1\), it uses the corresponding direction 1 stack entries. In the U(2) implementation each attached plaquette and rectangle loop is cyclically represented as a closed Wilson loop based at the active link's site-\(x\) frame. The orientation signs are the same pattern as U(1):</p>
+      <div class="math-block">\[\sigma^{(p)}=(-1,+1,+1,-1),
+\qquad
+\sigma^{(r)}=(-1,+1,-1,+1,+1,-1,+1,-1).\]</div>
+      <p>For a selected loop</p>
+      <div class="math-block">\[C_l=e^{i\phi_l}q_l,
+\qquad
+q_l=q_{0,l}I+i\sum_{a=1}^3q_{a,l}\sigma_a,\]</div>
+      <p>the split real features used by the field-transform formula are</p>
+      <div class="math-block">\[\mathrm{sin\_like}(C_l)
+=
+\left(
+q_{0,l}\sin\phi_l,
+q_{1,l}\cos\phi_l,
+q_{2,l}\cos\phi_l,
+q_{3,l}\cos\phi_l
+\right),\]</div>
+      <div class="math-block">\[\mathrm{cos\_like}(C_l)
+=
+\left(
+q_{0,l}\cos\phi_l,
+-q_{1,l}\sin\phi_l,
+-q_{2,l}\sin\phi_l,
+-q_{3,l}\sin\phi_l
+\right).\]</div>
+      <p>The four coefficient slots combine these real split components into one \(u(2)\simeq u(1)\oplus su(2)\) contribution:</p>
+      <div class="math-block">\[\Delta_{\phi,l}
+=
+k_{l,0}\,\sigma_l\,q_{0,l}\sin\phi_l
++
+k_{l,2}\,q_{0,l}\cos\phi_l,\]</div>
+      <div class="math-block">\[\Delta_{a,l}
+=
+k_{l,1}\,\sigma_l\,q_{a,l}\cos\phi_l
+-
+k_{l,3}\,q_{a,l}\sin\phi_l,
+\qquad a=1,2,3.\]</div>
+      <p>The active-link update is the sum over its attached plaquette and rectangle loops:</p>
+      <div class="math-block">\[\Delta_\ell
+=
+\sum_{l\in P(\ell)\cup R(\ell)}
+(\Delta_{\phi,l},\Delta_{1,l},\Delta_{2,l},\Delta_{3,l}).\]</div>
+      <p>Because the attached loop stack is based at the active link's site-\(x\) frame, the loop component vector \((q_{1,l},q_{2,l},q_{3,l})\) and the resulting \((\Delta_{1,l},\Delta_{2,l},\Delta_{3,l})\) transform in the correct local adjoint frame.</p>
+      <h3 id="jacobian-2">Jacobian</h3>
+      <p>For the local Jacobian, perturb one active U(2) link by a tangent algebra element \(X\in u(2)\):</p>
+      <div class="math-block">\[U_X=\exp_{U(2)}(X)U.\]</div>
+      <p>The output tangent is</p>
+      <div class="math-block">\[Y=\log_{U(2)}(U'_XU'^\dagger),\]</div>
+      <p>so one active link contributes a real \(4\times4\) Jacobian block</p>
+      <div class="math-block">\[J_\ell=\frac{\partial Y}{\partial X}.\]</div>
+      <p>Within one subset, the CNN coefficients \(k_l\) are independent of the active links because of the input masks. Therefore the derivative is taken only through the split loop variables \((\phi_l,q_l)\). If the active-link tangent induces first-order loop variations</p>
+      <div class="math-block">\[\delta\phi_l,
+\qquad
+\delta q_{0,l},
+\qquad
+\delta q_{a,l},\]</div>
+      <p>then the feature derivatives are</p>
+      <div class="math-block">\[\delta(q_{0,l}\sin\phi_l)
+=
+\delta q_{0,l}\sin\phi_l
++
+q_{0,l}\cos\phi_l\,\delta\phi_l,\]</div>
+      <div class="math-block">\[\delta(q_{a,l}\cos\phi_l)
+=
+\delta q_{a,l}\cos\phi_l
+-
+q_{a,l}\sin\phi_l\,\delta\phi_l,\]</div>
+      <div class="math-block">\[\delta(q_{0,l}\cos\phi_l)
+=
+\delta q_{0,l}\cos\phi_l
+-
+q_{0,l}\sin\phi_l\,\delta\phi_l,\]</div>
+      <div class="math-block">\[\delta(-q_{a,l}\sin\phi_l)
+=
+-\delta q_{a,l}\sin\phi_l
+-
+q_{a,l}\cos\phi_l\,\delta\phi_l.\]</div>
+      <p>Thus one loop contributes</p>
+      <div class="math-block">\[\delta\Delta_{\phi,l}
+=
+k_{l,0}\sigma_l
+\left[
+\delta q_{0,l}\sin\phi_l
++
+q_{0,l}\cos\phi_l\,\delta\phi_l
+\right]
++
+k_{l,2}
+\left[
+\delta q_{0,l}\cos\phi_l
+-
+q_{0,l}\sin\phi_l\,\delta\phi_l
+\right],\]</div>
+      <div class="math-block">\[\delta\Delta_{a,l}
+=
+k_{l,1}\sigma_l
+\left[
+\delta q_{a,l}\cos\phi_l
+-
+q_{a,l}\sin\phi_l\,\delta\phi_l
+\right]
++
+k_{l,3}
+\left[
+-\delta q_{a,l}\sin\phi_l
+-
+q_{a,l}\cos\phi_l\,\delta\phi_l
+\right].\]</div>
+      <p>These are the component-wise derivatives of the same four split features used in the transformation formula.</p>
+      <p>The full active-link Jacobian block maps \((X_\phi,X_1,X_2,X_3)\) to \((Y_\phi,Y_1,Y_2,Y_3)\). The subset Jacobian factorizes over active links:</p>
+      <div class="math-block">\[\det J_s
+=
+\prod_{\ell\in s}\det J_\ell,
+\qquad
+\log|\det J_s|
+=
+\sum_{\ell\in s}\log|\det J_\ell|.\]</div>
+      <p>The local block can be written as</p>
+      <div class="math-block">\[J_\ell = Q_\ell + E_\ell,\]</div>
+      <p>where the two terms have different origins.</p>
+      <p>The \(Q_\ell\) term is what remains if \(\Delta_\ell\) is held fixed while the input link is perturbed. Write</p>
+      <div class="math-block">\[\exp_{U(2)}(\Delta_\ell)
+=
+(\alpha_\ell,r_\ell),
+\qquad
+r_\ell=(r_0,r_1,r_2,r_3)\in SU(2),\]</div>
+      <p>where \(\alpha_\ell=\Delta_{\phi,\ell}\) is the central phase and \(r_\ell=\exp_{SU(2)}(\Delta_{1,\ell},\Delta_{2,\ell},\Delta_{3,\ell})\). Because the central U(1) phase commutes with every algebra element, the adjoint action leaves the \(u(1)\) tangent component unchanged. The traceless tangent vector is rotated by conjugation with the SU(2) quaternion:</p>
+      <div class="math-block">\[\mathrm{Ad}_{\exp(\Delta_\ell)}
+\begin{pmatrix}
+X_\phi\\
+X_1\\
+X_2\\
+X_3
+\end{pmatrix}
+=
+\begin{pmatrix}
+X_\phi\\
+\mathcal R(r_\ell)
+\begin{pmatrix}
+X_1\\
+X_2\\
+X_3
+\end{pmatrix}
+\end{pmatrix}.\]</div>
+      <p>Thus, in the split basis,</p>
+      <div class="math-block">\[Q_\ell
+=
+\begin{pmatrix}
+1 &amp; 0\\
+0 &amp; \mathcal R(r_\ell)
+\end{pmatrix}.\]</div>
+      <p>For \(v=(r_1,r_2,r_3)\) and</p>
+      <div class="math-block">\[[v]_\times
+=
+\begin{pmatrix}
+0 &amp; -r_3 &amp; r_2\\
+r_3 &amp; 0 &amp; -r_1\\
+-r_2 &amp; r_1 &amp; 0
+\end{pmatrix},\]</div>
+      <p>the rotation matrix in the code's quaternion convention is</p>
+      <div class="math-block">\[\mathcal R(r)
+=
+(r_0^2-v^Tv)I_3
++
+2vv^T
+-
+2r_0[v]_\times .\]</div>
+      <p>Equivalently,</p>
+      <div class="math-block">\[\mathcal R(r)
+=
+\begin{pmatrix}
+r_0^2+r_1^2-r_2^2-r_3^2
+&amp;
+2(r_1r_2+r_0r_3)
+&amp;
+2(r_1r_3-r_0r_2)
+\\
+2(r_1r_2-r_0r_3)
+&amp;
+r_0^2-r_1^2+r_2^2-r_3^2
+&amp;
+2(r_2r_3+r_0r_1)
+\\
+2(r_1r_3+r_0r_2)
+&amp;
+2(r_2r_3-r_0r_1)
+&amp;
+r_0^2-r_1^2-r_2^2+r_3^2
+\end{pmatrix}.\]</div>
+      <p>Since \(r\) is a unit quaternion, conjugation preserves the Euclidean norm of a pure quaternion:</p>
+      <div class="math-block">\[\left|r(0,X)r^\dagger\right|=|X|.\]</div>
+      <p>Therefore \(\mathcal R(r)^T\mathcal R(r)=I_3\) and \(\det\mathcal R(r)=1\). Hence</p>
+      <div class="math-block">\[\|Q_\ell\|_2=1,
+\qquad
+\det Q_\ell=1.\]</div>
+      <p>The \(E_\ell\) term is the remaining part caused by the active-link dependence of the loop factors in \(\Delta_\ell\). In differential notation,</p>
+      <div class="math-block">\[E_\ell X
+=
+D\exp_{\Delta_\ell}\!\left[D\Delta_\ell[X]\right],\]</div>
+      <p>with the result expressed in the same output tangent coordinates as \(Y\). This is the term computed from the component derivatives of \((\phi_l,q_{0,l},q_{1,l},q_{2,l},q_{3,l})\) above.</p>
+      <p>Concretely, the first step is the loop-feature derivative:</p>
+      <div class="math-block">\[D\Delta_\ell[X]
+=
+\delta\Delta_\ell
+=
+\sum_{l\in P(\ell)\cup R(\ell)}
+(\delta\Delta_{\phi,l},
+\delta\Delta_{1,l},
+\delta\Delta_{2,l},
+\delta\Delta_{3,l}).\]</div>
+      <p>Each \(\delta\Delta_{\phi,l}\) and \(\delta\Delta_{a,l}\) is linear in \(X\), because the induced loop variations \((\delta\phi_l,\delta q_{0,l},\delta q_{1,l},\delta q_{2,l},\delta q_{3,l})\) are linear in the active-link tangent. This is the quantity called <code>delta_jac</code> in the code, built by <code>_plaq_delta_jac</code> and <code>_rect_delta_jac</code>.</p>
+      <p>The second step is the differential of the group exponential. Write</p>
+      <div class="math-block">\[\Delta_\ell=(\Delta_{\phi,\ell},\Delta_{\mathrm{vec},\ell}),
+\qquad
+\delta\Delta_\ell=(\delta\Delta_{\phi,\ell},
+\delta\Delta_{\mathrm{vec},\ell}),\]</div>
+      <p>where</p>
+      <div class="math-block">\[\Delta_{\mathrm{vec},\ell}
+=
+(\Delta_{1,\ell},\Delta_{2,\ell},\Delta_{3,\ell}).\]</div>
+      <p>The central phase part is linear, so it passes through unchanged:</p>
+      <div class="math-block">\[(E_\ell X)_\phi=\delta\Delta_{\phi,\ell}.\]</div>
+      <p>The SU(2) part is not simple addition; it is the left-trivialized differential of the SU(2) exponential:</p>
+      <div class="math-block">\[(E_\ell X)_{\mathrm{vec}}
+=
+D\exp_{SU(2),\Delta_{\mathrm{vec},\ell}}
+\left[\delta\Delta_{\mathrm{vec},\ell}\right].\]</div>
+      <p>This is exactly the <code>_exp_tangent(delta, delta_jac)</code> contribution in the manual Jacobian code.</p>
+      <p>Equivalently, the \(4\times4\) matrix \(E_\ell\) is obtained column by column: for each tangent basis vector</p>
+      <div class="math-block">\[e_\phi,\ e_1,\ e_2,\ e_3,\]</div>
+      <p>compute \(D\Delta_\ell[e_j]\) from the attached loop-feature derivatives, pass it through \(D\exp_{\Delta_\ell}[\cdot]\), and place the resulting output tangent vector as column \(j\) of \(E_\ell\).</p>
+      <p>Therefore</p>
+      <div class="math-block">\[J_\ell
+=
+Q_\ell(I+Q_\ell^{-1}E_\ell),\]</div>
+      <p>and the sufficient non-singularity condition is</p>
+      <div class="math-block">\[\|E_\ell\|_2&lt;1.\]</div>
+      <p>With coefficient caps</p>
+      <div class="math-block">\[c_{\rm plaq}=\frac15,
+\qquad
+c_{\rm rect}=\frac1{40},\]</div>
+      <p>one active link receives 2 plaquette-loop contributions and 4 rectangle-loop contributions. The conservative bound is</p>
+      <div class="math-block">\[\|E_\ell\|_2
+&lt;
+4c_{\rm plaq}+8c_{\rm rect}
+=
+4\cdot\frac15+8\cdot\frac1{40}
+=1,\]</div>
+      <p>where the inequality is strict because the coefficients are strictly bounded by their <code>tanh</code> caps for finite real network outputs. Hence each active-link block is non-singular in exact arithmetic. The determinant sign is positive by the homotopy \(J_\ell(t)=Q_\ell+tE_\ell\), since the block cannot cross a zero determinant along \(t\in[0,1]\) and \(\det J_\ell(0)=1\).</p>
+      <p>The full U(2) transform is the composition of the 8 subset maps. Since each subset map has non-singular active-link blocks under the same bound, and the scaled maps \(\exp(t\Delta)\) connect each subset continuously to the identity, the subset maps are globally invertible on the compact product of U(2) link manifolds. Their composition is therefore globally invertible under these coefficient bounds.</p>
+      <h2 id="summary">Summary</h2>
+      <p>The U(1) field transformation is a scalar compact phase shift. Its loop inputs are ordinary gauge-invariant sine and cosine features, its active-link Jacobian is a scalar, and the coefficient caps make that scalar strictly positive. The 8-subset composition is therefore globally invertible.</p>
+      <p>The U(2) field transformation has the same subset structure but a larger local tangent space. Each active link carries one central phase direction and three traceless SU(2) directions, so the local Jacobian is a \(4\times4\) real block rather than a scalar. Gauge covariance requires the CNN to see only gauge-invariant scalar loop inputs, such as \(q_0\cos\phi\), \(q_0\sin\phi\), \(\cos\phi\), \(\sin\phi\), \(2(2q_0^2-1)\cos(2\phi)\), and \(2(2q_0^2-1)\sin(2\phi)\). The update itself is written in the split coordinates \((\phi,q_0,q_1,q_2,q_3)\). In the current implementation, every traceless loop component used in the update is taken from a Wilson loop based at the active link's starting site, so it transforms in the active link's local color frame.</p>
+      <p>The same masking idea is essential in both groups: within one subset, the CNN coefficients are computed from frozen links and do not depend on the active links. For U(1), this gives scalar Jacobian factors. For U(2), this gives independent \(4\times4\) active-link blocks. Under the stated coefficient caps, the U(2) perturbation part of each block has norm strictly below the invertibility threshold, so each subset map is non-singular and the full 8-subset composition is globally invertible in exact arithmetic.</p>
+    </article>
+  </main>
+</body>
+</html>

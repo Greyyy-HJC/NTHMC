@@ -8,6 +8,7 @@ This is an append-only development history for NTHMC.
 
 ## 2026-05-09
 
+- Added a browser-friendly `presentation/Field_transform.html` version of the field-transform derivation and linked it from the README.
 - Renamed 2du2 `model_training/plots` training-loss PDFs from the `cnn_loss_train_*` prefix to `debug_loss_train_*` for consistency with debug submission artifacts.
 
 ## 2026-05-07

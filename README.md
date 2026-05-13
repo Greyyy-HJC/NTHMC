@@ -39,6 +39,10 @@ artifacts/models
 
 Only `evaluation/base/` is included as the canonical evaluation example. Additional model variants should be added deliberately under `evaluation/` when they are needed, not copied as many top-level directories.
 
+## Presentation Notes
+
+- [Field transformation details](presentation/Field_transform.html): browser-friendly U(1)/U(2) field-transform derivation with MathJax-rendered formulas.
+
 ## Setup
 
 The current runnable baselines cover the 2D U(1) and U(2) base model pipelines. Install the lightweight Python dependencies with:
