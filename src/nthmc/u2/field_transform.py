@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Union
 
@@ -23,9 +24,9 @@ from nthmc.u2.u2_observables import (
     get_link_mask,
     get_plaq_mask,
     get_rect_mask,
+    identity_like,
     plaquette_from_field_batch,
     rectangle_from_field_batch,
-    identity_like,
     loop_sin_cos_features,
     quaternion_conj,
     quaternion_mul,
@@ -867,13 +868,55 @@ class FieldTransformation:
         total_action = self.compute_action_compiled(links_ori, beta) - jac_logdet
         return torch.autograd.grad(total_action.sum(), algebra, create_graph=create_graph)[0]
 
+    @staticmethod
+    def _soft_topology_from_plaquettes(plaquette_phase: torch.Tensor) -> torch.Tensor:
+        theta = 2 * plaquette_phase
+        second_harmonic = 0.3
+        topo_density = torch.sin(theta) + second_harmonic * torch.sin(2 * theta)
+        return torch.sum(topo_density, dim=(1, 2)) / (2 * math.pi)
+
+    def compute_transformed_force_and_topology_grad(
+        self,
+        links: torch.Tensor,
+        beta: float,
+        *,
+        create_graph: bool = True,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        algebra = torch.zeros(
+            (*links.shape[:-1], 4),
+            device=self.device,
+            dtype=links.dtype,
+            requires_grad=True,
+        )
+        varied_links = u2_mul(u2_exp(algebra), links.detach())
+        links_ori = self.forward_compiled(varied_links)
+        jac_logdet = self.compute_jac_logdet_compiled(varied_links)
+        total_action = self.compute_action_compiled(links_ori, beta) - jac_logdet
+        plaquettes = plaquette_from_field_batch(links_ori)
+        topology = self._soft_topology_from_plaquettes(plaquettes[..., 0])
+        force = torch.autograd.grad(
+            total_action.sum(),
+            algebra,
+            create_graph=create_graph,
+            retain_graph=True,
+        )[0]
+        topo_grad = torch.autograd.grad(
+            topology.sum(),
+            algebra,
+            create_graph=create_graph,
+        )[0]
+        return force, topo_grad
+
     def compute_transformed_force_terms(
         self,
         links: torch.Tensor,
         beta: float,
         *,
         create_graph: bool = True,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        include_topo_grad: bool = False,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | tuple[
+        torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor
+    ]:
         algebra = torch.zeros(
             (*links.shape[:-1], 4),
             device=self.device,
@@ -884,6 +927,9 @@ class FieldTransformation:
         links_ori = self.forward_compiled(varied_links)
         action = self.compute_action_compiled(links_ori, beta)
         jac_logdet = self.compute_jac_logdet_compiled(varied_links)
+        if include_topo_grad:
+            plaquettes = plaquette_from_field_batch(links_ori)
+            topology = self._soft_topology_from_plaquettes(plaquettes[..., 0])
         action_force = torch.autograd.grad(
             action.sum(),
             algebra,
@@ -894,20 +940,28 @@ class FieldTransformation:
             jac_logdet.sum(),
             algebra,
             create_graph=create_graph,
+            retain_graph=include_topo_grad,
         )[0]
         total_force = action_force - jac_force
+        if include_topo_grad:
+            topo_grad = torch.autograd.grad(
+                topology.sum(),
+                algebra,
+                create_graph=create_graph,
+            )[0]
+            return total_force, action_force, jac_force, jac_logdet, topo_grad
         return total_force, action_force, jac_force, jac_logdet
 
     def loss_fn(self, links_ori: torch.Tensor, *, create_graph: bool = True) -> torch.Tensor:
         if self.train_beta is None:
             raise RuntimeError("train_beta is not set")
         links_new = self.inverse(links_ori)
-        force_new = self.compute_transformed_force(
+        force_new, topo_grad = self.compute_transformed_force_and_topology_grad(
             links_new,
             self.train_beta,
             create_graph=create_graph,
         )
-        return self._weighted_force_loss_tensor(force_new)
+        return self._weighted_force_loss_tensor(force_new) + self._force_topology_alignment_loss(force_new, topo_grad)
 
     def _loss_weights(self) -> tuple[float, float, float, float]:
         weights = self.hyperparams.get("loss_weights", (1.0, 1.0, 1.0, 1.0))
@@ -951,6 +1005,20 @@ class FieldTransformation:
                 (torch.linalg.vector_norm(force_flat, ord=8, dim=1) / (volume ** (1 / 8))).mean().detach().cpu()
             ),
         }
+
+    def _force_topology_alignment(self, force: torch.Tensor, topo_grad: torch.Tensor) -> float:
+        return float(self._force_topology_alignment_tensor(force, topo_grad).mean().detach().cpu())
+
+    def _force_topology_alignment_loss(self, force: torch.Tensor, topo_grad: torch.Tensor) -> torch.Tensor:
+        alignment = self._force_topology_alignment_tensor(force, topo_grad)
+        return -torch.mean(alignment**2)
+
+    def _force_topology_alignment_tensor(self, force: torch.Tensor, topo_grad: torch.Tensor) -> torch.Tensor:
+        force_flat = force.reshape(force.shape[0], -1)
+        topo_flat = topo_grad.reshape(topo_grad.shape[0], -1)
+        numerator = torch.sum(force_flat * topo_flat, dim=1)
+        denominator = torch.linalg.vector_norm(force_flat, dim=1) * torch.linalg.vector_norm(topo_flat, dim=1)
+        return numerator / denominator.clamp_min(torch.finfo(force.dtype).eps)
 
     def _parameter_diagnostics(self) -> tuple[float, float]:
         norm_sq = 0.0
@@ -1036,14 +1104,16 @@ class FieldTransformation:
             coefficient_diag = self._coefficient_diagnostics(inv)
             param_norm, param_max = self._parameter_diagnostics()
         with torch.enable_grad():
-            force, action_force, jac_force, jac_logdet = self.compute_transformed_force_terms(
+            force, action_force, jac_force, jac_logdet, topo_grad = self.compute_transformed_force_terms(
                 inv.detach(),
                 self.train_beta,
                 create_graph=False,
+                include_topo_grad=True,
             )
             force_components = self._force_loss_components(force)
             action_force_components = self._force_loss_components(action_force)
             jac_force_components = self._force_loss_components(jac_force)
+            force_topo_alignment = self._force_topology_alignment(force, topo_grad)
         force_weighted_loss = self._weighted_force_loss(force_components)
         jac_logdet = jac_logdet.detach()
         jac_std = jac_logdet.std(unbiased=False).item()
@@ -1074,7 +1144,8 @@ class FieldTransformation:
             f"force_l2={force_components['l2']:.6f} "
             f"force_l4={force_components['l4']:.6f} "
             f"force_l6={force_components['l6']:.6f} "
-            f"force_l8={force_components['l8']:.6f}"
+            f"force_l8={force_components['l8']:.6f} "
+            f"force_topo_cos={force_topo_alignment:.6f}"
         )
         self.print(
             f"Epoch {epoch_display}/{n_epochs} force_split_diag: "

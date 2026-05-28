@@ -2,6 +2,12 @@
 
 This is an append-only development history for NTHMC.
 
+## 2026-05-27
+
+- Reworked U(2) observable autocorrelation estimates to follow the U(1)-style form with smaller statistical uncertainties, and started evaluation jobs to compare the revised uncertainty behavior.
+- Added a U(2) field-transform training loss term that aligns the transformed force with the topological-charge gradient, with training jobs running to check whether the alignment term lowers the loss.
+- Clarified and refined the topology-alignment idea in U(2) training: treat it as a training-time bias (not a physics constraint) to encourage transformed-force updates along topology-changing directions, switch the topology-gradient path to a differentiable soft proxy `Q_soft = sum(sin(theta) + 0.3*sin(2*theta)) / (2*pi)` to avoid near-zero gradients from wrapped-angle cancellation, and use `-mean(cos^2)` so the alignment term rewards nonzero force projection on `grad Q_soft`; the expected benefit is reduced topological freezing (lower critical slowing down in `Q`) rather than guaranteed improvement in total efficiency.
+
 ## 2026-05-12
 
 - Set `dynamic=False` in `src/nthmc/u2/field_transform.py` compile options because `dynamic=True` repeatedly triggered `torch/utils/_sympy/interp.py` `pow_by_natural` warnings and substantially increased compile time during U(2) runs.

@@ -20,7 +20,7 @@ def hmc_summary(
     acceptance_rate: float,
 ):
     """Print U(2) diagnostics and return a matplotlib summary figure."""
-    autocorrelations = autocorrelation(np.array(topological_charges), max_lag)
+    autocorrelations = autocorrelation(np.array(topological_charges), max_lag, beta, volume)
     return core_hmc_summary(
         plaq_mean_theory(beta),
         float("nan"),

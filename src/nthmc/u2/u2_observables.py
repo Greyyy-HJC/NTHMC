@@ -342,16 +342,35 @@ def identity_like(links: torch.Tensor) -> torch.Tensor:
     return result
 
 
-def autocorrelation(values: np.ndarray, max_lag: int) -> np.ndarray:
-    """Compute a normalized autocorrelation estimate for a one-dimensional series."""
-    values = np.asarray(values, dtype=float)
-    centered = values - np.mean(values)
-    variance = np.mean(centered**2)
-    result = np.full(max_lag + 1, np.nan)
-    result[0] = 1.0
-    if variance == 0:
-        return result
-    for lag in range(1, max_lag + 1):
-        if lag < len(centered):
-            result[lag] = np.mean(centered[:-lag] * centered[lag:]) / variance
-    return result
+def autocorrelation(topo: np.ndarray, max_lag: int, beta: float, volume: int) -> np.ndarray:
+    """Compute the autocorrelation of topo charge, check Eq.7 in 2511.02018, drop the regularization and the susceptibility."""
+    topo = np.round(topo).astype(int)
+    topo = topo - np.mean(topo)
+    norm = np.mean(topo**2)
+    autocorrelations = np.zeros(max_lag + 1)
+
+    for delta in range(max_lag + 1):
+        if delta == 0:
+            autocorrelations[delta] = 1.0
+        elif delta >= len(topo):
+            autocorrelations[delta] = np.nan
+        else:
+            topo_diff_squared = np.mean((topo[:-delta] - topo[delta:]) ** 2)
+            autocorrelations[delta] = 1 - topo_diff_squared / (2 * norm)
+
+    return autocorrelations
+
+
+# def autocorrelation(values: np.ndarray, max_lag: int) -> np.ndarray:
+#     """Compute a normalized autocorrelation estimate for a one-dimensional series."""
+#     values = np.asarray(values, dtype=float)
+#     centered = values - np.mean(values)
+#     variance = np.mean(centered**2)
+#     result = np.full(max_lag + 1, np.nan)
+#     result[0] = 1.0
+#     if variance == 0:
+#         return result
+#     for lag in range(1, max_lag + 1):
+#         if lag < len(centered):
+#             result[lag] = np.mean(centered[:-lag] * centered[lag:]) / variance
+#     return result
