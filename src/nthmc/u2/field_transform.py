@@ -17,6 +17,7 @@ import torch.nn as nn
 from torch.utils.checkpoint import checkpoint
 from tqdm import tqdm
 
+from nthmc.u2.field_transform_diagnostics import maybe_log_training_diagnostics
 from nthmc.u2.models import choose_model
 from nthmc.u2.u2_observables import (
     action_from_field_batch,
@@ -712,12 +713,6 @@ class FieldTransformation:
             return out, diag
         return out
 
-    def inverse_field_transformation(self, links: torch.Tensor) -> torch.Tensor:
-        return self.inverse(links.unsqueeze(0)).squeeze(0)
-
-    def inverse_field_transformation_compiled(self, links: torch.Tensor) -> torch.Tensor:
-        return self.inverse_compiled(links.unsqueeze(0)).squeeze(0)
-
     def compute_jac_logdet(self, links: torch.Tensor) -> torch.Tensor:
         return self.compute_jac_logdet_manual(links)
 
@@ -856,17 +851,13 @@ class FieldTransformation:
         *,
         create_graph: bool = True,
     ) -> torch.Tensor:
-        algebra = torch.zeros(
-            (*links.shape[:-1], 4),
-            device=self.device,
-            dtype=links.dtype,
-            requires_grad=True,
+        total_force, _, _, _ = self.compute_transformed_force_terms(
+            links,
+            beta,
+            create_graph=create_graph,
+            include_topo_grad=False,
         )
-        varied_links = u2_mul(u2_exp(algebra), links.detach())
-        links_ori = self.forward_compiled(varied_links)
-        jac_logdet = self.compute_jac_logdet_compiled(varied_links)
-        total_action = self.compute_action_compiled(links_ori, beta) - jac_logdet
-        return torch.autograd.grad(total_action.sum(), algebra, create_graph=create_graph)[0]
+        return total_force
 
     @staticmethod
     def _soft_topology_from_plaquettes(plaquette_phase: torch.Tensor) -> torch.Tensor:
@@ -882,30 +873,13 @@ class FieldTransformation:
         *,
         create_graph: bool = True,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        algebra = torch.zeros(
-            (*links.shape[:-1], 4),
-            device=self.device,
-            dtype=links.dtype,
-            requires_grad=True,
+        total_force, _, _, _, topo_grad = self.compute_transformed_force_terms(
+            links,
+            beta,
+            create_graph=create_graph,
+            include_topo_grad=True,
         )
-        varied_links = u2_mul(u2_exp(algebra), links.detach())
-        links_ori = self.forward_compiled(varied_links)
-        jac_logdet = self.compute_jac_logdet_compiled(varied_links)
-        total_action = self.compute_action_compiled(links_ori, beta) - jac_logdet
-        plaquettes = plaquette_from_field_batch(links_ori)
-        topology = self._soft_topology_from_plaquettes(plaquettes[..., 0])
-        force = torch.autograd.grad(
-            total_action.sum(),
-            algebra,
-            create_graph=create_graph,
-            retain_graph=True,
-        )[0]
-        topo_grad = torch.autograd.grad(
-            topology.sum(),
-            algebra,
-            create_graph=create_graph,
-        )[0]
-        return force, topo_grad
+        return total_force, topo_grad
 
     def compute_transformed_force_terms(
         self,
@@ -956,12 +930,19 @@ class FieldTransformation:
         if self.train_beta is None:
             raise RuntimeError("train_beta is not set")
         links_new = self.inverse(links_ori)
-        force_new, topo_grad = self.compute_transformed_force_and_topology_grad(
+        # Keep the original alignment-term path here for quick future rollback/testing:
+        # force_new, topo_grad = self.compute_transformed_force_and_topology_grad(
+        #     links_new,
+        #     self.train_beta,
+        #     create_graph=create_graph,
+        # )
+        # return self._weighted_force_loss_tensor(force_new) + self._force_topology_alignment_loss(force_new, topo_grad)
+        force_new = self.compute_transformed_force(
             links_new,
             self.train_beta,
             create_graph=create_graph,
         )
-        return self._weighted_force_loss_tensor(force_new) + self._force_topology_alignment_loss(force_new, topo_grad)
+        return self._weighted_force_loss_tensor(force_new)
 
     def _loss_weights(self) -> tuple[float, float, float, float]:
         weights = self.hyperparams.get("loss_weights", (1.0, 1.0, 1.0, 1.0))
@@ -1020,66 +1001,6 @@ class FieldTransformation:
         denominator = torch.linalg.vector_norm(force_flat, dim=1) * torch.linalg.vector_norm(topo_flat, dim=1)
         return numerator / denominator.clamp_min(torch.finfo(force.dtype).eps)
 
-    def _parameter_diagnostics(self) -> tuple[float, float]:
-        norm_sq = 0.0
-        max_abs = 0.0
-        for model in self.models:
-            for param in model.parameters():
-                detached = param.detach()
-                norm_sq += float(torch.sum(detached**2).cpu())
-                max_abs = max(max_abs, float(torch.max(torch.abs(detached)).cpu()))
-        return norm_sq**0.5, max_abs
-
-    def _delta_diagnostics(self, links: torch.Tensor) -> tuple[float, float]:
-        volume = self.lattice_size * self.lattice_size
-        links_curr = u2_normalize(links)
-        delta_norms = []
-        for index in range(self.n_subsets):
-            delta = self.compute_delta(links_curr, index)
-            delta_norms.append(torch.linalg.vector_norm(delta.reshape(delta.shape[0], -1), dim=1) / (volume**0.5))
-            links_curr = u2_mul(u2_exp(delta), links_curr)
-        if not delta_norms:
-            return 0.0, 0.0
-        stacked = torch.stack(delta_norms, dim=1)
-        return float(stacked.mean().cpu()), float(stacked.max().cpu())
-
-    def _coefficient_diagnostics(self, links: torch.Tensor) -> dict[str, float]:
-        plaq_coeff_abs = []
-        rect_coeff_abs = []
-        links_curr = u2_normalize(links)
-        for index in range(self.n_subsets):
-            plaq = plaquette_from_field_batch(links_curr)
-            rect = rectangle_from_field_batch(links_curr)
-            plaq_loops = self._plaq_loop_stack(links_curr)
-            rect_loops = self._rect_loop_stack(links_curr)
-            plaq_coeffs, rect_coeffs = self.compute_coefficients(links_curr, index, plaq, rect)
-            plaq_coeff_abs.append(torch.abs(plaq_coeffs).reshape(plaq_coeffs.shape[0], -1))
-            rect_coeff_abs.append(torch.abs(rect_coeffs).reshape(rect_coeffs.shape[0], -1))
-            delta = self._plaq_delta(plaq_coeffs, plaq_loops) + self._rect_delta(rect_coeffs, rect_loops)
-            mask = get_link_mask(index, links.shape[0], self.lattice_size, self.device)
-            links_curr = u2_mul(u2_exp(delta * mask.to(delta.dtype)), links_curr)
-        if not plaq_coeff_abs or not rect_coeff_abs:
-            return {
-                "k0_abs_mean": 0.0,
-                "k0_abs_max": 0.0,
-                "k0_sat_frac": 0.0,
-                "k1_abs_mean": 0.0,
-                "k1_abs_max": 0.0,
-                "k1_sat_frac": 0.0,
-            }
-        k0_all = torch.cat(plaq_coeff_abs, dim=1)
-        k1_all = torch.cat(rect_coeff_abs, dim=1)
-        k0_cap = 1 / 6
-        k1_cap = 1 / 45
-        return {
-            "k0_abs_mean": float(k0_all.mean().cpu()),
-            "k0_abs_max": float(k0_all.max().cpu()),
-            "k0_sat_frac": float((k0_all > 0.95 * k0_cap).to(torch.float32).mean().cpu()),
-            "k1_abs_mean": float(k1_all.mean().cpu()),
-            "k1_abs_max": float(k1_all.max().cpu()),
-            "k1_sat_frac": float((k1_all > 0.95 * k1_cap).to(torch.float32).mean().cpu()),
-        }
-
     def _maybe_log_training_diagnostics(
         self,
         test_data: torch.Tensor,
@@ -1088,75 +1009,13 @@ class FieldTransformation:
         n_epochs: int,
         grad_norm: float,
     ) -> None:
-        if self.fabric is not None and self.fabric.global_rank != 0:
-            return
-        n = min(8, int(test_data.shape[0]), int(batch_size))
-        if n <= 0:
-            return
-        probe = test_data[:n].to(self.device)
-        with torch.no_grad():
-            inv, diag = self.inverse(probe, return_diagnostics=True)
-            recon = self.forward(inv)
-            x0 = u2_normalize(probe)
-            rt = u2_mul(recon, u2_conj(x0))
-            rt_err = torch.linalg.norm(u2_log(rt).reshape(probe.shape[0], -1), dim=1).mean().item()
-            delta_mean, delta_max = self._delta_diagnostics(inv)
-            coefficient_diag = self._coefficient_diagnostics(inv)
-            param_norm, param_max = self._parameter_diagnostics()
-        with torch.enable_grad():
-            force, action_force, jac_force, jac_logdet, topo_grad = self.compute_transformed_force_terms(
-                inv.detach(),
-                self.train_beta,
-                create_graph=False,
-                include_topo_grad=True,
-            )
-            force_components = self._force_loss_components(force)
-            action_force_components = self._force_loss_components(action_force)
-            jac_force_components = self._force_loss_components(jac_force)
-            force_topo_alignment = self._force_topology_alignment(force, topo_grad)
-        force_weighted_loss = self._weighted_force_loss(force_components)
-        jac_logdet = jac_logdet.detach()
-        jac_std = jac_logdet.std(unbiased=False).item()
-        self.print(
-            f"Epoch {epoch_display}/{n_epochs} inverse_diag: "
-            f"max_final_diff={diag['max_final_diff']:.2e} "
-            f"mean_final_diff={diag['mean_final_diff']:.2e} "
-            f"n_subsets_not_converged={diag['n_not_converged']} "
-            f"round_trip_mean_log_norm={rt_err:.2e}"
-        )
-        self.print(
-            f"Epoch {epoch_display}/{n_epochs} train_diag: "
-            f"grad_norm_pre_clip={grad_norm:.2e} "
-            f"param_norm={param_norm:.2e} param_max_abs={param_max:.2e} "
-            f"delta_norm_mean={delta_mean:.2e} delta_norm_max={delta_max:.2e} "
-            f"loss_weights={self._loss_weights()} "
-            f"force_weighted_loss={force_weighted_loss:.6f} "
-            f"k0_abs_mean={coefficient_diag['k0_abs_mean']:.2e} "
-            f"k0_abs_max={coefficient_diag['k0_abs_max']:.2e} "
-            f"k0_sat_frac={coefficient_diag['k0_sat_frac']:.3f} "
-            f"k1_abs_mean={coefficient_diag['k1_abs_mean']:.2e} "
-            f"k1_abs_max={coefficient_diag['k1_abs_max']:.2e} "
-            f"k1_sat_frac={coefficient_diag['k1_sat_frac']:.3f} "
-            f"jac_logdet_mean={jac_logdet.mean().item():.2e} "
-            f"jac_logdet_std={jac_std:.2e} "
-            f"jac_logdet_min={jac_logdet.min().item():.2e} "
-            f"jac_logdet_max={jac_logdet.max().item():.2e} "
-            f"force_l2={force_components['l2']:.6f} "
-            f"force_l4={force_components['l4']:.6f} "
-            f"force_l6={force_components['l6']:.6f} "
-            f"force_l8={force_components['l8']:.6f} "
-            f"force_topo_cos={force_topo_alignment:.6f}"
-        )
-        self.print(
-            f"Epoch {epoch_display}/{n_epochs} force_split_diag: "
-            f"action_l2={action_force_components['l2']:.6f} "
-            f"action_l4={action_force_components['l4']:.6f} "
-            f"action_l6={action_force_components['l6']:.6f} "
-            f"action_l8={action_force_components['l8']:.6f} "
-            f"jac_l2={jac_force_components['l2']:.6f} "
-            f"jac_l4={jac_force_components['l4']:.6f} "
-            f"jac_l6={jac_force_components['l6']:.6f} "
-            f"jac_l8={jac_force_components['l8']:.6f}"
+        maybe_log_training_diagnostics(
+            self,
+            test_data,
+            batch_size,
+            epoch_display,
+            n_epochs,
+            grad_norm,
         )
 
     def train_step(self, links_ori: torch.Tensor) -> tuple[float, float]:

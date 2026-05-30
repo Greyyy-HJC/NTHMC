@@ -2,9 +2,20 @@
 
 This is an append-only development history for NTHMC.
 
+## 2026-05-30
+
+- Disabled the U(2) topology-alignment contribution in `loss_fn` directly (kept the old alignment-loss path commented for quick rollback), so training/evaluation no longer pays the extra per-batch topology-gradient autograd cost from the loss path.
+- Kept per-epoch U(2) diagnostics unchanged, including `force_topo_cos` computation/printing, so alignment observability remains available while the training objective stays force-only.
+- Refactored `src/nthmc/u2/field_transform.py` for readability without changing behavior by routing transformed-force helpers through a single core path and moving bulky training-diagnostics collection/formatting into `src/nthmc/u2/field_transform_diagnostics.py`.
+
+## 2026-05-28
+
+- Kept the U(2) autocorrelation definition with fixed-volume normalization, `A(δ)=1-<ΔQ^2(δ)>/(2V)`, and updated the `presentation/2du2_scaling.ipynb` gamma ratio convention to report gain as `gamma_HMC / gamma_FT-HMC` (so FT-HMC improvement appears as values greater than 1).
+
 ## 2026-05-27
 
 - Reworked U(2) observable autocorrelation estimates to follow the U(1)-style form with smaller statistical uncertainties, and started evaluation jobs to compare the revised uncertainty behavior.
+- Switched the U(2) autocorrelation normalization from sample variance to fixed `2*volume` (`A(δ)=1-<ΔQ^2(δ)>/(2V)`) and aligned the 2du2 scaling notebook gamma helpers with this definition to reduce `R_gamma` noise while keeping the 2du1-style workflow.
 - Added a U(2) field-transform training loss term that aligns the transformed force with the topological-charge gradient, with training jobs running to check whether the alignment term lowers the loss.
 - Clarified and refined the topology-alignment idea in U(2) training: treat it as a training-time bias (not a physics constraint) to encourage transformed-force updates along topology-changing directions, switch the topology-gradient path to a differentiable soft proxy `Q_soft = sum(sin(theta) + 0.3*sin(2*theta)) / (2*pi)` to avoid near-zero gradients from wrapped-angle cancellation, and use `-mean(cos^2)` so the alignment term rewards nonzero force projection on `grad Q_soft`; the expected benefit is reduced topological freezing (lower critical slowing down in `Q`) rather than guaranteed improvement in total efficiency.
 

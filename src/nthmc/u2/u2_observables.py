@@ -343,10 +343,9 @@ def identity_like(links: torch.Tensor) -> torch.Tensor:
 
 
 def autocorrelation(topo: np.ndarray, max_lag: int, beta: float, volume: int) -> np.ndarray:
-    """Compute the autocorrelation of topo charge, check Eq.7 in 2511.02018, drop the regularization and the susceptibility."""
+    """Compute a U(1)-style topo autocorrelation with fixed 2*volume normalization."""
     topo = np.round(topo).astype(int)
     topo = topo - np.mean(topo)
-    norm = np.mean(topo**2)
     autocorrelations = np.zeros(max_lag + 1)
 
     for delta in range(max_lag + 1):
@@ -356,7 +355,7 @@ def autocorrelation(topo: np.ndarray, max_lag: int, beta: float, volume: int) ->
             autocorrelations[delta] = np.nan
         else:
             topo_diff_squared = np.mean((topo[:-delta] - topo[delta:]) ** 2)
-            autocorrelations[delta] = 1 - topo_diff_squared / (2 * norm)
+            autocorrelations[delta] = 1 - topo_diff_squared / (2 * volume)
 
     return autocorrelations
 
