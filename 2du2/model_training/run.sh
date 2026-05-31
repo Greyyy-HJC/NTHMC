@@ -13,4 +13,4 @@ SEED=1029
 torchrun --standalone --nproc_per_node=1 train.py \
     --lattice_size ${LATTICE_SIZE} --min_beta ${MIN_BETA} --max_beta ${MAX_BETA} --beta_gap ${BETA_GAP} \
     --n_epochs ${N_EPOCHS} --batch_size ${BATCH_SIZE} --n_subsets ${N_SUBSETS} \
-    --model_tag ${MODEL_TAG} --save_tag "${BASE_SAVE_TAG}_${SEED}" --rand_seed ${SEED} --if_identity_init --if_check_jac
+    --model_tag ${MODEL_TAG} --save_tag "${BASE_SAVE_TAG}_${SEED}" --rand_seed ${SEED} --if_check_jac

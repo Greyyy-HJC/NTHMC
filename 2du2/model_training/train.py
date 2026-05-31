@@ -37,12 +37,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model_tag", type=str, default="base")
     parser.add_argument("--save_tag", type=str, default=None)
     parser.add_argument("--rand_seed", type=int, default=1331)
-    parser.add_argument("--if_identity_init", action="store_true")
     parser.add_argument("--if_check_jac", action="store_true")
     parser.add_argument("--if_compile", action="store_true")
     parser.add_argument("--lr", type=float, default=None)
     parser.add_argument("--weight_decay", type=float, default=None)
-    parser.add_argument("--init_std", type=float, default=None)
     parser.add_argument("--max_grad_norm", type=float, default=None)
     parser.add_argument("--plateau_factor", type=float, default=None)
     parser.add_argument("--plateau_patience", type=int, default=None)
@@ -87,8 +85,6 @@ def main() -> None:
         hyperparams["lr"] = args.lr
     if args.weight_decay is not None:
         hyperparams["weight_decay"] = args.weight_decay
-    if args.init_std is not None:
-        hyperparams["init_std"] = args.init_std
     if args.max_grad_norm is not None:
         hyperparams["max_grad_norm"] = args.max_grad_norm
     if args.plateau_factor is not None:
@@ -118,7 +114,6 @@ def main() -> None:
         n_subsets=args.n_subsets,
         if_check_jac=args.if_check_jac,
         num_workers=args.n_workers,
-        identity_init=args.if_identity_init,
         model_tag=args.model_tag,
         save_tag=save_tag,
         model_dir=model_dir,

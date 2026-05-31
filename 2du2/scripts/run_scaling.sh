@@ -290,8 +290,7 @@ run_training() {
             --rand_seed "${seed}" \
             --accelerator "${TRAIN_ACCELERATOR}" \
             --strategy "${TRAIN_STRATEGY}" \
-            --devices "${TRAIN_DEVICES}" \
-            --if_identity_init
+            --devices "${TRAIN_DEVICES}"
     )
 }
 

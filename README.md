@@ -150,7 +150,7 @@ python generate.py --lattice_size 8 --beta 3.0 --n_configs 32 --n_thermalization
 
 ```bash
 cd /eagle/fthmc/run/NTHMC/2du2/model_training
-torchrun --standalone --nproc_per_node=1 train.py --lattice_size 8 --min_beta 3.0 --max_beta 3.0 --beta_gap 1.0 --n_epochs 1 --batch_size 8 --if_identity_init
+torchrun --standalone --nproc_per_node=1 train.py --lattice_size 8 --min_beta 3.0 --max_beta 3.0 --beta_gap 1.0 --n_epochs 1 --batch_size 8
 ```
 
 ```bash

@@ -2,7 +2,7 @@ import torch
 import pytest
 
 from nthmc.u2.field_transform import FieldTransformation
-from nthmc.u2.models import LocalNet
+from nthmc.u2.models import LocalNet, _LayerScale
 from nthmc.u2.u2_fthmc import HMCU2FT
 from nthmc.u2.u2_hmc import HMCU2
 from nthmc.u2.u2_observables import (
@@ -27,6 +27,23 @@ from nthmc.u1.u1_observables import (
     plaq_from_field_batch as u1_plaq_from_field_batch,
     rect_from_field_batch as u1_rect_from_field_batch,
 )
+
+
+def _perturb_models(transform: FieldTransformation, std: float) -> FieldTransformation:
+    """Give the models a small, non-trivial transform for property-based tests.
+
+    The models now start as the exact identity (zero-initialized output gate), so these tests
+    perturb the convolution weights by ``std`` and open the ``_LayerScale`` gates to 1. With the
+    gate as a no-op this reproduces exactly the near-identity model that the retired
+    ``identity_init`` + ``init_std`` knobs used to construct.
+    """
+    for model in transform.models:
+        for param in model.parameters():
+            torch.nn.init.normal_(param, mean=0.0, std=std)
+        for module in model.modules():
+            if isinstance(module, _LayerScale):
+                torch.nn.init.ones_(module.scale)
+    return transform
 
 
 def gauge_transform_split(links: torch.Tensor, omega: torch.Tensor) -> torch.Tensor:
@@ -247,6 +264,8 @@ def test_loop_delta_applies_orientation_only_to_sin_like_terms() -> None:
 
 def test_u2_base_model_returns_full_layout_coefficients() -> None:
     model = LocalNet()
+    # Open the zero-initialized identity gate so the layout assertions see a non-trivial output.
+    torch.nn.init.ones_(model.out_scale.scale)
     plaq_features = torch.randn(2, 6, 4, 4)
     rect_features = torch.randn(2, 12, 4, 4)
 
@@ -288,7 +307,7 @@ def test_u2_theoretical_plaquette_is_finite_real_value() -> None:
 
 
 def test_zero_initialized_field_transform_preserves_links() -> None:
-    transform = FieldTransformation(4, n_subsets=1, identity_init=False)
+    transform = FieldTransformation(4, n_subsets=1)
     for model in transform.models:
         for param in model.parameters():
             torch.nn.init.zeros_(param)
@@ -302,7 +321,7 @@ def test_zero_initialized_field_transform_preserves_links() -> None:
 
 def test_field_transform_inverse_round_trip() -> None:
     set_seed(1234)
-    transform = FieldTransformation(4, n_subsets=1, identity_init=True, hyperparams={"init_std": 0.0001})
+    transform = _perturb_models(FieldTransformation(4, n_subsets=1), 0.0001)
     links = u2_exp(torch.randn(2, 2, 4, 4, 4))
 
     transformed = transform.forward(links)
@@ -313,7 +332,7 @@ def test_field_transform_inverse_round_trip() -> None:
 
 def test_field_transform_jacobian_is_finite_and_differentiable() -> None:
     set_seed(1234)
-    transform = FieldTransformation(2, n_subsets=1, identity_init=True, hyperparams={"init_std": 0.0001})
+    transform = _perturb_models(FieldTransformation(2, n_subsets=1), 0.0001)
     links = u2_exp(torch.randn(1, 2, 2, 2, 4))
 
     logdet = transform.compute_jac_logdet(links)
@@ -328,12 +347,13 @@ def test_field_transform_jacobian_is_finite_and_differentiable() -> None:
 
 def test_field_transform_manual_jacobian_matches_autograd() -> None:
     set_seed(1234)
-    transform = FieldTransformation(
-        2,
-        n_subsets=1,
-        identity_init=True,
-        hyperparams={"init_std": 0.0001},
-        compile_enabled=False,
+    transform = _perturb_models(
+        FieldTransformation(
+            2,
+            n_subsets=1,
+            compile_enabled=False,
+        ),
+        0.0001,
     )
     links = u2_exp(0.2 * torch.randn(1, 2, 2, 2, 4))
 
@@ -345,12 +365,13 @@ def test_field_transform_manual_jacobian_matches_autograd() -> None:
 
 def test_field_transform_full_subset_float32_jacobian_check_tolerance() -> None:
     set_seed(1029)
-    transform = FieldTransformation(
-        8,
-        n_subsets=8,
-        identity_init=True,
-        hyperparams={"init_std": 0.001},
-        compile_enabled=False,
+    transform = _perturb_models(
+        FieldTransformation(
+            8,
+            n_subsets=8,
+            compile_enabled=False,
+        ),
+        0.001,
     )
     links = u2_exp(0.2 * torch.randn(1, 2, 8, 8, 4))
 
@@ -363,7 +384,7 @@ def test_field_transform_full_subset_float32_jacobian_check_tolerance() -> None:
 
 def test_field_transform_is_gauge_covariant_with_full_coefficient_slots() -> None:
     set_seed(1234)
-    transform = FieldTransformation(4, n_subsets=8, identity_init=True, hyperparams={"init_std": 0.01})
+    transform = _perturb_models(FieldTransformation(4, n_subsets=8), 0.01)
     links = u2_exp(0.2 * torch.randn(1, 2, 4, 4, 4))
     omega = u2_exp(0.5 * torch.randn(1, 4, 4, 4))
 
@@ -380,7 +401,7 @@ def test_field_transform_is_gauge_covariant_with_full_coefficient_slots() -> Non
 
 def test_field_transform_logdet_is_gauge_invariant_with_full_coefficient_slots() -> None:
     set_seed(1234)
-    transform = FieldTransformation(4, n_subsets=8, identity_init=True, hyperparams={"init_std": 0.01})
+    transform = _perturb_models(FieldTransformation(4, n_subsets=8), 0.01)
     links = u2_exp(0.2 * torch.randn(1, 2, 4, 4, 4))
     omega = u2_exp(0.5 * torch.randn(1, 4, 4, 4))
 
@@ -396,7 +417,7 @@ def test_u2_force_matches_finite_difference_directional_derivative() -> None:
     try:
         beta = 2.0
         lattice_size = 2
-        transform = FieldTransformation(lattice_size, n_subsets=1, identity_init=False)
+        transform = FieldTransformation(lattice_size, n_subsets=1)
         links = u2_exp(0.2 * torch.randn(1, 2, lattice_size, lattice_size, 4))
         direction = torch.randn_like(links[..., :4])
         direction = direction / torch.linalg.vector_norm(direction)
@@ -421,11 +442,12 @@ def test_u2_transformed_force_matches_finite_difference_directional_derivative()
     try:
         beta = 2.0
         lattice_size = 2
-        transform = FieldTransformation(
-            lattice_size,
-            n_subsets=1,
-            identity_init=True,
-            hyperparams={"init_std": 0.0001},
+        transform = _perturb_models(
+            FieldTransformation(
+                lattice_size,
+                n_subsets=1,
+            ),
+            0.0001,
         )
         links = u2_exp(0.2 * torch.randn(1, 2, lattice_size, lattice_size, 4))
         direction = torch.randn_like(links[..., :4])
@@ -452,7 +474,7 @@ def test_u2_transformed_force_matches_finite_difference_directional_derivative()
 
 def test_u2_transformed_force_decomposition_matches_compute_force() -> None:
     set_seed(1234)
-    transform = FieldTransformation(2, n_subsets=1, identity_init=True, hyperparams={"init_std": 0.0001})
+    transform = _perturb_models(FieldTransformation(2, n_subsets=1), 0.0001)
     links = u2_exp(0.2 * torch.randn(1, 2, 2, 2, 4))
 
     force = transform.compute_force(links, beta=2.0, transformed=True)
@@ -467,13 +489,12 @@ def test_u2_transformed_force_decomposition_matches_compute_force() -> None:
 
 def test_u2_checkpoint_delta_preserves_training_loss_and_gradients() -> None:
     set_seed(1234)
-    base = FieldTransformation(4, n_subsets=2, identity_init=True, hyperparams={"init_std": 0.0001})
+    base = _perturb_models(FieldTransformation(4, n_subsets=2), 0.0001)
     base.train_beta = 2.0
     checkpointed = FieldTransformation(
         4,
         n_subsets=2,
-        identity_init=True,
-        hyperparams={"init_std": 0.0001, "checkpoint_delta": True},
+        hyperparams={"checkpoint_delta": True},
     )
     checkpointed.train_beta = 2.0
     for checkpointed_model, base_model in zip(checkpointed.models, base.models):
@@ -503,20 +524,20 @@ def test_u2_checkpoint_delta_preserves_training_loss_and_gradients() -> None:
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA memory probe requires a GPU")
 def test_u2_checkpoint_delta_reduces_training_peak_cuda_memory() -> None:
     set_seed(1234)
-    base = FieldTransformation(
-        8,
-        device="cuda",
-        n_subsets=4,
-        identity_init=True,
-        hyperparams={"init_std": 0.0001},
+    base = _perturb_models(
+        FieldTransformation(
+            8,
+            device="cuda",
+            n_subsets=4,
+        ),
+        0.0001,
     )
     base.train_beta = 2.0
     checkpointed = FieldTransformation(
         8,
         device="cuda",
         n_subsets=4,
-        identity_init=True,
-        hyperparams={"init_std": 0.0001, "checkpoint_delta": True},
+        hyperparams={"checkpoint_delta": True},
     )
     checkpointed.train_beta = 2.0
     for checkpointed_model, base_model in zip(checkpointed.models, base.models):
@@ -575,7 +596,7 @@ def test_hmc_smoke_run_outputs_valid_u2_configs() -> None:
 
 def test_fthmc_smoke_run_outputs_valid_u2_configs() -> None:
     set_seed(1234)
-    transform = FieldTransformation(4, n_subsets=1, identity_init=False)
+    transform = FieldTransformation(4, n_subsets=1)
     for model in transform.models:
         for param in model.parameters():
             torch.nn.init.zeros_(param)

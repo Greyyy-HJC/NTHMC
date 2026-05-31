@@ -52,7 +52,6 @@ class FieldTransformation:
         n_subsets: int = 8,
         if_check_jac: bool = False,
         num_workers: int = 0,
-        identity_init: bool = True,
         model_tag: str = "base",
         save_tag: str | None = None,
         model_dir: str | Path = "artifacts/models",
@@ -81,7 +80,6 @@ class FieldTransformation:
         self.compile_enabled = compile_enabled
 
         self.hyperparams = {
-            "init_std": 0.001,
             "lr": 0.0001,
             "weight_decay": 1e-5,
             "factor": 0.5,
@@ -96,10 +94,6 @@ class FieldTransformation:
 
         model_cls = choose_model(model_tag)
         raw_models = nn.ModuleList([model_cls().to(self.device) for _ in range(n_subsets)])
-        if identity_init:
-            for model in raw_models:
-                for param in model.parameters():
-                    nn.init.normal_(param, mean=0.0, std=self.hyperparams["init_std"])
 
         raw_optimizers = [
             torch.optim.AdamW(
@@ -914,7 +908,7 @@ class FieldTransformation:
             jac_logdet.sum(),
             algebra,
             create_graph=create_graph,
-            retain_graph=include_topo_grad,
+            retain_graph=True,
         )[0]
         total_force = action_force - jac_force
         if include_topo_grad:
