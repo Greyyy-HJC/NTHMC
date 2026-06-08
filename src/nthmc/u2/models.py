@@ -116,41 +116,6 @@ class WideLocalNet(LocalNet):
         self.out_scale = _LayerScale(self.config.output_channels, gain=0.9)
 
 
-class SplitLocalNet(nn.Module):
-    """Base-width shared trunk with separate plaquette and rectangle heads."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.config = NetConfig()
-        self.conv_input = nn.Conv2d(
-            self.config.input_channels,
-            self.config.hidden_channels,
-            self.config.kernel_size,
-            padding="same",
-            padding_mode="circular",
-        )
-        self.trunk = nn.Conv2d(
-            self.config.hidden_channels,
-            self.config.hidden_channels,
-            self.config.kernel_size,
-            padding="same",
-            padding_mode="circular",
-        )
-        self.activation = nn.GELU()
-        self.plaq_head = nn.Conv2d(self.config.hidden_channels, self.config.plaq_output_channels, kernel_size=1)
-        self.rect_head = nn.Conv2d(self.config.hidden_channels, self.config.rect_output_channels, kernel_size=1)
-        self.plaq_scale = _LayerScale(self.config.plaq_output_channels)
-        self.rect_scale = _LayerScale(self.config.rect_output_channels)
-
-    def forward(self, plaq_features: torch.Tensor, rect_features: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        x = torch.cat([plaq_features, rect_features], dim=1)
-        x = self.activation(self.conv_input(x))
-        x = self.activation(self.trunk(x))
-        plaq_logits = self.plaq_scale(self.plaq_head(x))
-        rect_logits = self.rect_scale(self.rect_head(x))
-        return _scale_split_coefficients(plaq_logits, rect_logits)
-
-
 class CapLocalNet(LocalNet):
     """Base CNN with only the coefficient caps changed to 90% of a 50/50 split."""
 
@@ -163,8 +128,8 @@ class CapLocalNet(LocalNet):
         return _scale_split_coefficients(plaq_logits, rect_logits, plaq_cap=0.1125, rect_cap=0.05625)
 
 
-class WideSplitCapLocalNet(nn.Module):
-    """Wide split-head model with a fixed 50/50 cap split using 90% of the budget."""
+class MultiScaleCapLocalNet(nn.Module):
+    """Multi-scale wide split-head model with a fixed 90% 50/50 cap split."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -176,23 +141,36 @@ class WideSplitCapLocalNet(nn.Module):
             padding="same",
             padding_mode="circular",
         )
-        self.trunk = nn.Conv2d(
+        self.local_branch = nn.Conv2d(
             self.config.hidden_channels,
             self.config.hidden_channels,
             self.config.kernel_size,
             padding="same",
             padding_mode="circular",
         )
+        self.dilated_branch = nn.Conv2d(
+            self.config.hidden_channels,
+            self.config.hidden_channels,
+            self.config.kernel_size,
+            padding="same",
+            padding_mode="circular",
+            dilation=2,
+        )
+        self.point_branch = nn.Conv2d(self.config.hidden_channels, self.config.hidden_channels, kernel_size=1)
+        self.mix = nn.Conv2d(3 * self.config.hidden_channels, self.config.hidden_channels, kernel_size=1)
         self.activation = nn.GELU()
         self.plaq_head = nn.Conv2d(self.config.hidden_channels, self.config.plaq_output_channels, kernel_size=1)
         self.rect_head = nn.Conv2d(self.config.hidden_channels, self.config.rect_output_channels, kernel_size=1)
-        self.plaq_scale = _LayerScale(self.config.plaq_output_channels, gain=0.9)
-        self.rect_scale = _LayerScale(self.config.rect_output_channels, gain=0.9)
+        self.plaq_scale = _LayerScale(self.config.plaq_output_channels, gain=0.8)
+        self.rect_scale = _LayerScale(self.config.rect_output_channels, gain=0.8)
 
     def forward(self, plaq_features: torch.Tensor, rect_features: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         x = torch.cat([plaq_features, rect_features], dim=1)
         x = self.activation(self.conv_input(x))
-        x = self.activation(self.trunk(x))
+        local = self.activation(self.local_branch(x))
+        dilated = self.activation(self.dilated_branch(x))
+        point = self.activation(self.point_branch(x))
+        x = self.activation(self.mix(torch.cat([local, dilated, point], dim=1)))
         plaq_logits = self.plaq_scale(self.plaq_head(x))
         rect_logits = self.rect_scale(self.rect_head(x))
         return _scale_split_coefficients(plaq_logits, rect_logits, plaq_cap=0.1125, rect_cap=0.05625)
@@ -204,10 +182,8 @@ def choose_model(model_tag: str) -> type[nn.Module]:
         return LocalNet
     if model_tag in {"wide"}:
         return WideLocalNet
-    if model_tag in {"split"}:
-        return SplitLocalNet
     if model_tag in {"cap"}:
         return CapLocalNet
-    if model_tag in {"widesplitcap"}:
-        return WideSplitCapLocalNet
+    if model_tag in {"mscap"}:
+        return MultiScaleCapLocalNet
     raise ValueError(f"Invalid model tag: {model_tag}")
