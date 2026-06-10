@@ -32,5 +32,9 @@ venv/
 .codex
 .claude/
 
+# Local files
+2du2/evaluation/replot_autocorr.py
+2du2/evaluation/plots_recomputed/
+
 # Keep empty workflow directories tracked
 !**/.gitkeep

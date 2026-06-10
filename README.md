@@ -160,6 +160,15 @@ python compare_fthmc.py --lattice_size 8 --beta 3.0 --train_beta 3.0 --n_configs
 
 Generated U(2) gauge arrays live in `2du2/configs` with shape `[N, 2, L, L, 2, 2]`. Training converts those matrices to the internal split phase/quaternion representation on load. Trained checkpoints live in `2du2/artifacts/models`, and plots/CSV diagnostics stay under workflow-local `plots` and `dumps` directories.
 
+When you only need to redraw topological autocorrelation comparisons for existing `hmc`/`base` runs (without rerunning evaluations), use:
+
+```bash
+cd /eagle/fthmc/run/NTHMC/2du2/evaluation
+python replot_autocorr.py --lattice_size 32 --beta 10.0 --n_steps 10 --seed 1029 --max_lag 20
+```
+
+The script reads `hmc/dumps/topo_hmc_*.csv` and `base/dumps/topo_fthmc_*.csv` pairs and writes overlay PDFs to `2du2/evaluation/plots_recomputed`.
+
 ## Current Scope
 
 Shared implementation should live in `src/nthmc/core`. U(1)-specific implementation lives in `src/nthmc/u1`, and U(2)-specific implementation lives in `src/nthmc/u2`. System-specific configuration and outputs stay under `2du1` or `2du2`.

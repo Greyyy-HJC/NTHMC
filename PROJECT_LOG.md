@@ -7,6 +7,11 @@ This is an append-only development history for NTHMC.
 - Added `presentation/model.md` summarizing U(2) model feature ablations at beta=10.0, L=32, seed 1029; kept the current `src/nthmc/u2/models.py` surface to `base`, `wide`, `cap`, and `mscap` after `mscap` outperformed the earlier wide/split/cap combination.
 - Added `presentation/alignment.md` summarizing the U(2) topology-alignment diagnostics and short alignment-loss ablations, documenting why the alignment term remains diagnostic-only instead of part of the training loss.
 
+## 2026-06-09
+
+- Added `2du2/evaluation/replot_autocorr.py` to recompute and redraw U(2) autocorrelation overlays for matched `hmc`/`base` topo dump pairs without rerunning evaluation jobs, outputting PDFs under `2du2/evaluation/plots_recomputed`.
+- Documented the no-rerun redraw command in `README.md` for quick `(L, beta, nsteps, seed)` filtered comparisons.
+
 ## 2026-05-30
 
 - Replaced the U(2) `identity_init` parameter-crippling scheme with a ReZero-style `_LayerScale` output gate. Every U(2) model (`base`, `wide`, `residual`, `dilated`, `mlp`, `flexcap`) now keeps healthy default convolution initialization and starts as the exact identity transform via a zero-initialized per-channel output gate that ramps up during training; the gate's fixed `gain` is the per-variant ramp knob. This fixes the deeper variants' early tanh saturation (dead/stalled or overshooting training) caused by `identity_init` setting every parameter (including the LayerScale) to `N(0, 0.001)`.
