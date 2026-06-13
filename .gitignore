@@ -35,6 +35,7 @@ venv/
 # Local files
 2du2/evaluation/replot_autocorr.py
 2du2/evaluation/plots_recomputed/
+2du2/evaluation/force_loss_diag/
 
 # Keep empty workflow directories tracked
 !**/.gitkeep
