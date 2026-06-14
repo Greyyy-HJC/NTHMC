@@ -2,6 +2,10 @@
 
 This is an append-only development history for NTHMC.
 
+## 2026-06-14
+
+- Added `presentation/optimization_plan.md`, an L=16 U(2) FTHMC architecture-search runbook covering correctness gates, tiered compute budgets, `add_folder.sh` eval workspaces, mandatory `FT_STEP_SIZE` probes, and R_gamma/R_deltaQ win criteria for iterations on `models.py` and `field_transform.py`.
+
 ## 2026-06-08
 
 - Added `presentation/model.md` summarizing U(2) model feature ablations at beta=10.0, L=32, seed 1029; kept the current `src/nthmc/u2/models.py` surface to `base`, `wide`, `cap`, and `mscap` after `mscap` outperformed the earlier wide/split/cap combination.
