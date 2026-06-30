@@ -931,6 +931,7 @@ class FieldTransformation:
         #     create_graph=create_graph,
         # )
         # return self._weighted_force_loss_tensor(force_new) + self._force_topology_alignment_loss(force_new, topo_grad)
+        # TODO: add square on the alignment term, think of tuning the weights of these two terms
         force_new = self.compute_transformed_force(
             links_new,
             self.train_beta,

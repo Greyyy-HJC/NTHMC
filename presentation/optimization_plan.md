@@ -149,7 +149,7 @@ flowchart TD
 | **G1 Unit tests** | `pytest tests/test_u2.py -k "field_transform"` | All pass (round-trip, Jacobian manual vs autograd, gauge covariance) |
 | **G2 Jacobian check** | Short train with `--if_check_jac`, L=8 or L=16, 1 epoch, 1 GPU | No Jacobian mismatch errors |
 | **G3 Training diagnostics** | Read epoch log from `maybe_log_training_diagnostics` | `n_subsets_not_converged=0`; `max_final_diff` ~ 1e-6; `k0_sat_frac`, `k1_sat_frac` not pinned at 1.0 |
-| **G4 Step-size probe** | Short FT-HMC sweep (see Section 7) | Find `ft_step_size` with acceptance ∈ [0.55, 0.95] |
+| **G4 Step-size probe** | Short FT-HMC sweep (see Section 8) | Find `ft_step_size` with acceptance ∈ [0.55, 0.95] |
 | **G5 Formal eval acceptance** | T1/T2/T3 `compare_fthmc.py` run | Acceptance ∈ [0.55, 0.95] at chosen `FT_STEP_SIZE` |
 
 **Do not** use `--if_compile` with `--if_check_jac`. Skip `--if_compile` during step-size probes.
@@ -268,7 +268,7 @@ python compare_fthmc.py \
 
 3. Sweep `--ft_step_size` until acceptance lands in **[0.55, 0.95]**
 4. Read `dumps/accept_rate_fthmc_L16_beta*_nsteps10_*.csv`
-5. Record the chosen value in the **step-size log** (Section 11); use it in `sub_gen.sh` for T1/T2/T3
+5. Record the chosen value in the **step-size log** (Section 12); use it in `sub_gen.sh` for T1/T2/T3
 
 **Probe settings:** `n_configs` 128, single seed `1029`, no `--if_compile`. (Acceptance from probe is coarse; T1 at 512 configs re-validates before scoring R_gamma / R_deltaQ.)
 
@@ -317,7 +317,7 @@ flowchart LR
 
 ### Phase 2 — Agent search loop
 
-See Section 10. Use `l16_search/` (or per-candidate folders). Compare every candidate against Phase 1 baseline.
+See Section 11. Use `l16_search/` (or per-candidate folders). Compare every candidate against Phase 1 baseline.
 
 ### Phase 3 — Confirm winner
 
@@ -331,7 +331,47 @@ See Section 10. Use `l16_search/` (or per-candidate folders). Compare every cand
 - [ ] Eval at β=13+ using existing `evaluation/base/` pipeline
 - [ ] No merge from `field_transform_ref.py` needed
 
-## 10. Agent iteration loop
+## 10. Optimization directions (candidate families)
+
+Four orthogonal directions for the search. Each targets a different mechanism, so candidates do not overlap and results stay interpretable. Search each direction mostly on its own; only combine a winning architecture with a winning loss after both are validated alone.
+
+| Dir | Lever | Primary file | New `model_tag` / flag | Targets | Cost |
+|-----|-------|--------------|------------------------|---------|------|
+| D1 | Receptive field / multiscale | [`models.py`](../src/nthmc/u2/models.py) | new tag (e.g. `deep`) | R_gamma(16) | T1 (heavier) |
+| D2 | Coefficient caps + gate gain | [`models.py`](../src/nthmc/u2/models.py) | new tag (e.g. `cap2`) | R_deltaQ | cheap T1 |
+| D3 | Force-tail loss shaping | [`train.py`](../2du2/model_training/train.py) CLI | `--loss_weights` (no code edit) | acceptance → R_gamma | cheapest |
+| D4 | Topology-directed loss | [`field_transform.py`](../src/nthmc/u2/field_transform.py) | `--align_weight` (new) | R_gamma & R_deltaQ | T1 |
+
+### D1 — Long-range / multiscale receptive field
+
+- **Hypothesis:** topological barriers correlate over distances larger than the base receptive field (`LocalNet` 3×3×2 conv ≈ 5 sites). A larger effective RF lets the transform reshape the action across the whole tunneling region.
+- **Mechanism:** spatial expressivity.
+- **Change:** add a new `nn.Module` + `choose_model` tag — a residual stack of `padding_mode="circular"` 3×3 convs (depth 3–4), optionally a dilation pyramid. Reuse the split heads, the 90% caps, GELU, and the zero-init `_LayerScale` so it still starts at identity. Start from `MultiScaleCapLocalNet` (`mscap`), which already mixes local / dilated / point branches.
+- **Risk:** at L=16 a too-large RF wraps the torus and over-smooths; watch G3 saturation (`k0_sat_frac`, `k1_sat_frac`) and inverse convergence.
+
+### D2 — Coefficient cap & gate strength
+
+- **Hypothesis:** the base caps (plaq `tanh/5 = 0.2`, rect `tanh/40 = 0.025`) may be too conservative or mis-balanced; a stronger but still reversible transform takes larger topological steps.
+- **Mechanism:** output parametrization (transform magnitude).
+- **Change:** new `model_tag` sweeping `plaq_cap` / `rect_cap` (via `_scale_split_coefficients`) and `_LayerScale(gain=...)`. Existing reference points: `cap` (0.1125 / 0.05625), `wide` (gain 0.9), `mscap` (gain 0.8). Forward-path only — the tanh squash preserves reversibility by construction.
+- **Risk:** too-large caps degrade inverse-iteration convergence (G3 `n_subsets_not_converged`, `max_final_diff`) and acceptance (G4/G5).
+
+### D3 — Force-tail loss shaping (CLI-only)
+
+- **Hypothesis:** acceptance at a fixed `ft_step_size` is limited by the worst-case forces, not the mean. Up-weighting the higher-order norms (L6/L8 in `_weighted_force_loss_tensor`) flattens the force tail, allowing a larger usable step size and faster topology mixing.
+- **Mechanism:** loss objective (tail control); no code edit.
+- **Change:** sweep `--loss_weights` (e.g. `1 1 1 1` baseline vs `0.5 1 1.5 2` tail-heavy vs `0 0 1 1` tail-only) together with `--lr`, `--weight_decay`, `--max_grad_norm`. Applies to any `model_tag`.
+- **Risk:** over-weighting the tail destabilizes training; watch grad norm and test loss vs base at the same tier.
+
+### D4 — Topology-directed loss term
+
+- **Hypothesis:** minimizing the force norm only indirectly helps topology. Explicitly aligning the transformed force with the soft-topology gradient steers MD trajectories along topology-changing directions — a direct proxy for the goal metrics.
+- **Mechanism:** loss objective (topology-directed).
+- **Change:** re-enable the stubbed path in `loss_fn` (commented at lines ~927–933) using `compute_transformed_force_and_topology_grad` + `_force_topology_alignment_loss`; add an `align_weight` hyperparam key (default `0.0`, so base behavior is unchanged) and a matching `--align_weight` CLI flag in `train.py`. Optionally tune `second_harmonic` in `_soft_topology_from_plaquettes`.
+- **Gate note:** training-only path (no Jacobian change → G2 unaffected), but extend `tests/test_u2.py` (G1) to cover the new loss branch.
+- **Risk:** the competing objective can raise the force norm and lower acceptance; tune `align_weight` against R_deltaQ / acceptance.
+
+## 11. Agent iteration loop
 
 For each candidate `model_tag`:
 
@@ -348,10 +388,12 @@ For each candidate `model_tag`:
 
 ### Suggested search order (cheap → expressive)
 
-1. Hyperparams only (`loss_weights`, `lr`; existing `cap` / `mscap` tags)
-2. Locality variants (`kernel_size=(1,1)` or single 3×3 conv layer)
-3. Width / multiscale (`wide`, `mscap`, new branches)
-4. Loss additions (topology alignment term stubbed in `field_transform.py` lines 927–933; Jacobian/delta regularization)
+Run the directions from Section 10 cheapest first:
+
+1. **D3** (force-tail loss shaping) — CLI-only sweep on `base`; establishes how much acceptance headroom comes from the loss alone.
+2. **D2** (caps + gate gain) — cheap forward-path tags; start from `cap` / `mscap`.
+3. **D1** (receptive field / multiscale) — new architecture tag; heavier, run after D2/D3 narrow the loss + caps.
+4. **D4** (topology-directed loss) — objective experiment; layer on the best D1–D3 configuration once each is validated alone.
 
 ### Promotion criteria (T1 → T2)
 
@@ -364,7 +406,7 @@ For each candidate `model_tag`:
 - Both R_gamma(16) > 1 and R_deltaQ > 1 at β=10 (3 seeds)
 - Acceptance OK at β=12 and β=14
 
-## 11. Result logging templates
+## 12. Result logging templates
 
 Maintain these tables in this file (append rows) or in a companion `optimization_log.md`.
 
@@ -372,20 +414,23 @@ Maintain these tables in this file (append rows) or in a companion `optimization
 
 | model_tag | beta | ft_step_size | accept_rate | n_configs_probe | seed | pass |
 |-----------|------|--------------|-------------|-----------------|------|------|
-| base | 10.0 | | | 128 | 1029 | |
-| base | 12.0 | | | 128 | 1029 | |
-| base | 14.0 | | | 128 | 1029 | |
-| base | 16.0 | | | 128 | 1029 | |
+| base | 10.0 | 0.15 | 0.71875 | 32 | 1029 | yes |
+| base | 12.0 | 0.14 | 0.62500 | 32 | 1029 | yes |
+| base | 14.0 | 0.14 | 0.56250 | 32 | 1029 | yes |
+| base | 16.0 | 0.12 | 0.68750 | 32 | 1029 | yes |
 
 ### Results log
 
 | run_id | eval_tag | model_tag | ft_step_size β=10 | train_loss | accept β=10 | R_gamma(16) β=10 | R_deltaQ β=10 | R_gamma β=12 | R_deltaQ β=12 | pass T0 | notes |
 |--------|----------|-----------|-------------------|------------|-------------|------------------|---------------|--------------|---------------|---------|-------|
-| base_ref | l16_base | base | | | | | | | | | Phase 1 baseline |
+| base_ref | l16_base | base | 0.15 | 22.267659 | 0.552734 | 1.151(39) | 0.987(28) | pending | pending | yes | T2 seeds 1029/1331/1999 at β=10; β=12 missing seed 1331 rerun; β=14: R_gamma 1.39(41), R_deltaQ 1.53(43); β=16: R_gamma 0.847(64), R_deltaQ 1.03(28) |
+| d3_lw0011 | l16_search | base | pending probe | 10.660200 | pending | pending | pending | — | — | yes | D3 `--loss_weights 0 0 1 1`; β=10 probe jobs submitted for ft_step_size 0.15/0.17/0.19 |
+| d2_cap | l16_search | cap | pending | pending | pending | pending | pending | — | — | pending | D2 cap/gate candidate; L=16 β=8 seed 1029 T1 training submitted |
+| d2_mscap | l16_search | mscap | pending | pending | pending | pending | pending | — | — | pending | D2/D1 multiscale cap candidate; L=16 β=8 seed 1029 T1 training submitted |
 
 Add columns for β=14, β=16 at T2/T3 as needed.
 
-## 12. Pitfalls
+## 13. Pitfalls
 
 - **L=16 receptive field:** base 3×3×2 conv has RF=5 sites ≈ 31% of L — locality changes may behave differently than at L=32 (16%)
 - **OOD extrapolation:** train β=8, eval β≥10; poor extrapolation is a failure mode, not noise
@@ -395,7 +440,7 @@ Add columns for β=14, β=16 at T2/T3 as needed.
 - **`inf` ratios:** when HMC autocorrelation at lag 16 ≈ 1, R_gamma diverges (see notebook `gamma_ratio_from_autocorrelations`)
 - **`field_transform_ref.py` is off-limits** — do not edit during search
 
-## 13. Quick reference commands
+## 14. Quick reference commands
 
 ### Training (T2 example)
 
@@ -418,14 +463,4 @@ pytest tests/test_u2.py -k "field_transform"
 
 ### Analyze results (notebook)
 
-Adapt constants in `presentation/2du2_scaling.ipynb`:
-
-```python
-HMC_DUMP_DIR = REPO_ROOT / "2du2" / "evaluation" / "hmc" / "dumps"
-FTHMC_DUMP_DIR = REPO_ROOT / "2du2" / "evaluation" / "l16_base" / "dumps"  # or l16_search, etc.
-MODEL_TAG = "base"  # the --model_tag used in compare_fthmc.py, not necessarily the folder name
-TRAIN_BETA = 8.0
-LATTICE_SIZES = [16]
-BETAS = [10.0, 12.0, 14.0, 16.0]
-SEEDS = [1029, 1107, 1331, 1984, 1999, 2008, 2017, 2025]  # match sub_L16.sh
-```
+Adapt the constants in `presentation/2du2_scaling.ipynb` as listed in Section 7 (`HMC_DUMP_DIR`, `FTHMC_DUMP_DIR`, `MODEL_TAG`, `TRAIN_BETA`, `LATTICE_SIZES`, `BETAS`, `SEEDS`).

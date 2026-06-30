@@ -2,9 +2,22 @@
 
 This is an append-only development history for NTHMC.
 
+## 2026-06-17
+
+- Think of translate to tensorflow with jit.
+- Think of qex (in nim language), the problem is on neural network, we don't have torch there, but we have adam in qex.
+- For the alignment term, add square on it to encourage both align and anti-align.
+
+## 2026-06-17
+
+- Fixed L=16 search probe submission hygiene in `2du2/evaluation/l16_search`: probe jobs now rely on expanded `qsub -o` log paths and pass a per-step `--output_suffix` so concurrent `FT_STEP_SIZE` probes for the same checkpoint/beta do not overwrite each other's topology and acceptance dumps.
+- Added queue-submission guards so L=16 T1 eval jobs require an explicitly probed `FT_STEP_SIZE_10`, and `submit_pending_eval.sh` no longer submits T1 or baseline metrics by default before the relevant probe/rerun prerequisites are complete.
+- Added `2du2/model_training/sub_gen_d2.sh` to generate the L=16 beta=8.0 seed-1029 T1 training screen for the existing `cap` and `mscap` D2 architecture candidates.
+
 ## 2026-06-14
 
 - Added `presentation/optimization_plan.md`, an L=16 U(2) FTHMC architecture-search runbook covering correctness gates, tiered compute budgets, `add_folder.sh` eval workspaces, mandatory `FT_STEP_SIZE` probes, and R_gamma/R_deltaQ win criteria for iterations on `models.py` and `field_transform.py`.
+- Added a new "Optimization directions (candidate families)" section to `presentation/optimization_plan.md` defining four orthogonal search directions (D1 receptive-field/multiscale, D2 coefficient caps + gate gain, D3 force-tail loss shaping via `--loss_weights`, D4 topology-directed loss), rewrote the suggested search order to reference D1-D4 cheapest-first, renumbered later sections, fixed section cross-references, and de-duplicated the notebook-config block.
 
 ## 2026-06-08
 
