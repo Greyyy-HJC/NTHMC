@@ -49,8 +49,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save_tag", type=str, required=True)
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "gpu", "cuda"])
     parser.add_argument("--no_tune_step_size", action="store_true")
-    parser.add_argument("--if_compile", action="store_true")
-    parser.add_argument("--compile_backend", type=str, default="inductor")
     return parser.parse_args()
 
 
@@ -80,7 +78,6 @@ def main() -> None:
         n_subsets=8,
         if_check_jac=False,
         num_workers=0,
-        identity_init=True,
         model_tag=args.model_tag,
         save_tag=args.save_tag,
         model_dir=model_dir,
@@ -90,19 +87,8 @@ def main() -> None:
 
     model_load_start = time.time()
     field_transform.load_best_model(args.train_beta)
-    field_transform.freeze_models_for_eval()
     model_load_time = time.time() - model_load_start
     print(f">>> Model loaded in {model_load_time:.2f} seconds")
-    if args.if_compile:
-        compile_setup_start = time.time()
-        field_transform.enable_eval_compile(backend=args.compile_backend)
-        compile_setup_time = time.time() - compile_setup_start
-        force_field_transformation = field_transform.field_transformation_compiled
-        force_compute_jac_logdet = field_transform.compute_jac_logdet_compiled
-    else:
-        compile_setup_time = 0.0
-        force_field_transformation = None
-        force_compute_jac_logdet = None
 
     hmc = HMCU1FT(
         args.lattice_size,
@@ -113,8 +99,6 @@ def main() -> None:
         field_transformation=field_transform.field_transformation,
         compute_jac_logdet=field_transform.compute_jac_logdet,
         observable_field_transformation=field_transform.field_transformation,
-        force_field_transformation=force_field_transformation,
-        force_compute_jac_logdet=force_compute_jac_logdet,
         device=device,
         tune_step_size=not args.no_tune_step_size,
         seed=args.rand_seed,
@@ -172,13 +156,10 @@ def main() -> None:
         "model_tag": args.model_tag,
         "save_tag": args.save_tag,
         "device": device,
-        "if_compile": args.if_compile,
-        "compile_backend": args.compile_backend if args.if_compile else None,
         "model_load_time_sec": model_load_time,
-        "compile_setup_time_sec": compile_setup_time,
         "thermalization_time_sec": therm_time,
         "run_time_sec": run_time,
-        "total_time_sec": model_load_time + compile_setup_time + therm_time + run_time,
+        "total_time_sec": model_load_time + therm_time + run_time,
         "therm_acceptance_rate": therm_acceptance_rate,
         "acceptance_rate": acceptance_rate,
         "plaq_mean": float(np.mean(plaq)) if len(plaq) else float("nan"),

@@ -187,8 +187,7 @@ run_training() {
             --model_tag "${MODEL_TAG}" \
             --save_tag "${save_tag}" \
             --rand_seed "${seed}" \
-            --device "${DEVICE}" \
-            --if_identity_init
+            --device "${DEVICE}"
     )
 }
 

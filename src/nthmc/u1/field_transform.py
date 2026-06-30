@@ -44,7 +44,6 @@ class FieldTransformation:
         n_subsets: int = 8,
         if_check_jac: bool = False,
         num_workers: int = 0,
-        identity_init: bool = True,
         model_tag: str = "addcos",
         save_tag: str | None = None,
         model_dir: str | Path = "artifacts/models",
@@ -65,14 +64,15 @@ class FieldTransformation:
         self.dump_dir = Path(dump_dir)
         self.train_beta: float | None = None
         self.hyperparams: dict[str, float] = {
-            "init_std": 0.001 if identity_init else 0.02,
+            "init_std": 0.001,
             "lr": 0.001,
             "weight_decay": 0.0001,
             "factor": 0.5,
             "patience": 5,
             "early_stop_patience": 20,
             "max_grad_norm": 10.0,
-            "inverse_iters": 24,
+            "inverse_max_iters": 200,
+            "inverse_tol": 1e-6,
         }
         if hyperparams:
             self.hyperparams.update(hyperparams)
@@ -125,12 +125,6 @@ class FieldTransformation:
         self.params = params
         self.opt_state = self.optimizer.init(self.params)
         print(f"Loaded JAX checkpoint from epoch {metadata.get('epoch')} with loss {metadata.get('loss')}")
-
-    def freeze_models_for_eval(self) -> None:
-        return None
-
-    def enable_eval_compile(self, *, backend: str = "jax") -> None:
-        return None
 
     @staticmethod
     def _plaq_angle_stack(plaq: Array) -> Array:
@@ -214,41 +208,61 @@ class FieldTransformation:
     def field_transformation(self, theta: Array) -> Array:
         return self.forward(jnp.asarray(theta)[jnp.newaxis, ...])[0]
 
-    def field_transformation_compiled(self, theta: Array) -> Array:
-        return self.field_transformation(theta)
+    def _inverse_settings(self, max_iter: int | None = None, tol: float | None = None) -> tuple[int, float]:
+        resolved_max_iter = int(
+            max_iter
+            or self.hyperparams.get("inverse_max_iters", self.hyperparams.get("inverse_iters", 200))
+        )
+        resolved_tol = float(tol or self.hyperparams.get("inverse_tol", 1e-6))
+        return resolved_max_iter, resolved_tol
 
-    def inverse_with_params(self, params: Params, theta: Array, *, max_iter: int | None = None) -> Array:
-        max_iter = int(max_iter or self.hyperparams.get("inverse_iters", 24))
-        theta_curr = theta
-        for index in reversed(range(self.n_subsets)):
-            theta_iter = theta_curr
-            for _ in range(max_iter):
-                theta_iter = theta_curr - self.ft_phase_with_params(params, theta_iter, index)
-            theta_curr = theta_iter
-        return theta_curr
-    
+    def inverse_with_params(
+        self,
+        params: Params,
+        theta: Array,
+        *,
+        max_iter: int | None = None,
+        tol: float | None = None,
+    ) -> Array:
+        return self.inverse_with_diagnostics(params, theta, max_iter=max_iter, tol=tol)[0]
+
     def inverse_with_diagnostics(
         self,
         params: Params,
         theta: Array,
         *,
         max_iter: int | None = None,
+        tol: float | None = None,
     ) -> tuple[Array, dict[str, Array]]:
-        max_iter = int(max_iter or self.hyperparams.get("inverse_iters", 24))
+        max_iter, tol = self._inverse_settings(max_iter, tol)
         theta_curr = theta
         final_diffs = []
+        n_not_converged = jnp.asarray(0, dtype=jnp.int32)
 
         for index in reversed(range(self.n_subsets)):
             theta_iter = theta_curr
-            diff = jnp.asarray(jnp.inf, dtype=theta.dtype)
+            init_diff = jnp.asarray(jnp.inf, dtype=theta.dtype)
+            init_converged = jnp.asarray(False)
 
-            for _ in range(max_iter):
+            def iteration_step(carry: tuple[Array, Array, Array], _: Array) -> tuple[tuple[Array, Array, Array], None]:
+                theta_iter, diff, converged = carry
                 theta_next = theta_curr - self.ft_phase_with_params(params, theta_iter, index)
                 denom = jnp.clip(jnp.linalg.norm(theta_iter), min=1e-12)
-                diff = jnp.linalg.norm(theta_next - theta_iter) / denom
-                theta_iter = theta_next
+                next_diff = jnp.linalg.norm(theta_next - theta_iter) / denom
+                should_update = jnp.logical_not(converged)
+                theta_iter = jnp.where(should_update, theta_next, theta_iter)
+                diff = jnp.where(should_update, next_diff, diff)
+                converged = jnp.logical_or(converged, next_diff < tol)
+                return (theta_iter, diff, converged), None
 
-            final_diffs.append(diff)
+            (theta_iter, final_diff, converged), _ = jax.lax.scan(
+                iteration_step,
+                (theta_iter, init_diff, init_converged),
+                xs=None,
+                length=max_iter,
+            )
+            final_diffs.append(final_diff)
+            n_not_converged = n_not_converged + jnp.asarray(jnp.logical_not(converged), dtype=jnp.int32)
             theta_curr = theta_iter
 
         final_diffs = jnp.stack(final_diffs)
@@ -258,12 +272,27 @@ class FieldTransformation:
         diagnostics = {
             "max_final_diff": jnp.max(final_diffs),
             "mean_final_diff": jnp.mean(final_diffs),
+            "n_not_converged": n_not_converged,
             "round_trip_mean_abs_err": round_trip_err,
         }
         return theta_curr, diagnostics
 
-    def inverse(self, theta: Array, **_: Any) -> Array:
-        return self.inverse_with_params(self.params, jnp.asarray(theta))
+    def inverse(
+        self,
+        theta: Array,
+        *,
+        max_iter: int | None = None,
+        tol: float | None = None,
+        return_diagnostics: bool = False,
+        **_: Any,
+    ) -> Array | tuple[Array, dict[str, Array]]:
+        theta = jnp.asarray(theta)
+        if theta.ndim == 3:
+            out, diagnostics = self.inverse_with_diagnostics(self.params, theta[jnp.newaxis, ...], max_iter=max_iter, tol=tol)
+            out = out[0]
+        else:
+            out, diagnostics = self.inverse_with_diagnostics(self.params, theta, max_iter=max_iter, tol=tol)
+        return (out, diagnostics) if return_diagnostics else out
 
     def inverse_field_transformation(self, theta: Array) -> Array:
         return self.inverse(jnp.asarray(theta)[jnp.newaxis, ...])[0]
@@ -283,11 +312,42 @@ class FieldTransformation:
             theta_curr = theta_curr + self.ft_phase_with_params(params, theta_curr, index)
         return log_det
 
+    def compute_jac_logdet_autodiff_with_params(self, params: Params, theta: Array) -> Array:
+        """Full-field autodiff Jacobian check for the first batch item only."""
+        theta_single = jnp.asarray(theta)[0]
+        flat_shape = theta_single.shape
+
+        def flat_forward(flat_theta: Array) -> Array:
+            field = flat_theta.reshape(flat_shape)
+            transformed = self.forward_with_params(params, field[jnp.newaxis, ...])[0]
+            return transformed.reshape(-1)
+
+        jacobian = jax.jacfwd(flat_forward)(theta_single.reshape(-1))
+        _, logabsdet = jnp.linalg.slogdet(jacobian)
+        return logabsdet[jnp.newaxis]
+
+    def _check_jacobian_if_requested(self, params: Params, theta: Array) -> None:
+        if not self.if_check_jac:
+            return
+        theta = jnp.asarray(theta)
+        manual = self.compute_jac_logdet_with_params(params, theta[:1])
+        autodiff = self.compute_jac_logdet_autodiff_with_params(params, theta[:1])
+        manual_value = float(jax.block_until_ready(manual[0]))
+        autodiff_value = float(jax.block_until_ready(autodiff[0]))
+        abs_diff = abs(autodiff_value - manual_value)
+        rel_diff = abs_diff / max(abs(manual_value), 1e-12)
+        if not np.isclose(autodiff_value, manual_value, rtol=1e-4, atol=1e-6):
+            print(
+                "\nWarning: Jacobian log determinant difference "
+                f"abs={abs_diff:.2e}, rel={rel_diff:.2e}"
+            )
+            print(">>> Jacobian is not correct!")
+        else:
+            print(f"\nJacobian log det (analytic): {manual_value:.2e}, (autodiff): {autodiff_value:.2e}")
+            print(">>> Jacobian is all good!")
+
     def compute_jac_logdet(self, theta: Array) -> Array:
         return self.compute_jac_logdet_with_params(self.params, jnp.asarray(theta))
-
-    def compute_jac_logdet_compiled(self, theta: Array) -> Array:
-        return self.compute_jac_logdet(theta)
 
     def new_action_with_params(self, params: Params, theta_new: Array, beta: float) -> Array:
         theta_ori = self.forward_with_params(params, theta_new[jnp.newaxis, ...])[0]
@@ -295,6 +355,7 @@ class FieldTransformation:
 
     def compute_force(self, theta: Array, beta: float, *, transformed: bool = False) -> Array:
         if transformed:
+            self._check_jacobian_if_requested(self.params, theta)
             return jax.vmap(jax.grad(lambda x: self.new_action_with_params(self.params, x, beta)))(jnp.asarray(theta))
         return jax.vmap(jax.grad(lambda x: action(x, beta)))(jnp.asarray(theta))
 
@@ -321,13 +382,41 @@ class FieldTransformation:
             rng.shuffle(indices)
         return [data[indices[start : start + batch_size]] for start in range(0, len(indices), batch_size)]
 
-    def train(self, train_data: Array, test_data: Array, train_beta: float, *, n_epochs: int, batch_size: int) -> None:
+    @staticmethod
+    def _unreplicate(tree: Any) -> Any:
+        return jax.tree_util.tree_map(lambda value: value[0], tree)
+
+    @staticmethod
+    def _shard_batch(batch: np.ndarray, n_devices: int) -> Array:
+        if len(batch) % n_devices != 0:
+            raise ValueError(f"Batch length {len(batch)} is not divisible by local_device_count={n_devices}")
+        return jnp.asarray(batch.reshape(n_devices, len(batch) // n_devices, *batch.shape[1:]))
+
+    def train(
+        self,
+        train_data: Array,
+        test_data: Array,
+        train_beta: float,
+        *,
+        n_epochs: int,
+        batch_size: int,
+        data_parallel: bool = False,
+    ) -> None:
         self.train_beta = float(train_beta)
         train_np = np.asarray(train_data, dtype=np.float32)
         test_np = np.asarray(test_data, dtype=np.float32)
         self.model_dir.mkdir(parents=True, exist_ok=True)
         self.dump_dir.mkdir(parents=True, exist_ok=True)
         self.plot_dir.mkdir(parents=True, exist_ok=True)
+        devices = jax.local_devices()
+        n_devices = len(devices)
+        if data_parallel:
+            if batch_size % n_devices != 0:
+                raise ValueError(
+                    f"--data_parallel requires batch_size ({batch_size}) to be divisible by "
+                    f"jax.local_device_count() ({n_devices})"
+                )
+            print(f"data_parallel: enabled with local_device_count={n_devices}")
 
         @jax.jit
         def train_step(params: Params, opt_state: Any, batch: Array) -> tuple[Params, Any, Array]:
@@ -337,23 +426,66 @@ class FieldTransformation:
             return params, opt_state, loss
 
         eval_step = jax.jit(lambda params, batch: self.loss_fn_with_params(params, batch, self.train_beta))
-        diag_step = jax.jit(lambda params, batch: self.inverse_with_diagnostics(params, batch, max_iter=int(self.hyperparams.get("inverse_iters", 24)),)[1])
+        train_step_parallel = jax.pmap(
+            lambda params, opt_state, batch: self._parallel_train_step(params, opt_state, batch),
+            axis_name="devices",
+            devices=devices,
+        )
+        eval_step_parallel = jax.pmap(
+            lambda params, batch: jax.lax.pmean(self.loss_fn_with_params(params, batch, self.train_beta), axis_name="devices"),
+            axis_name="devices",
+            devices=devices,
+        )
+        diag_step = jax.jit(
+            lambda params, batch: self.inverse_with_diagnostics(
+                params,
+                batch,
+                max_iter=int(self.hyperparams.get("inverse_max_iters", self.hyperparams.get("inverse_iters", 200))),
+                tol=float(self.hyperparams.get("inverse_tol", 1e-6)),
+            )[1]
+        )
         rng = np.random.default_rng(0)
         train_losses: list[float] = []
         test_losses: list[float] = []
         best_loss = float("inf")
         bad_epochs = 0
+        params_parallel = jax.device_put_replicated(self.params, devices) if data_parallel else None
+        opt_state_parallel = jax.device_put_replicated(self.opt_state, devices) if data_parallel else None
         for epoch in tqdm(range(n_epochs), desc="Training epochs"):
             epoch_losses = []
             for batch in self._batches(train_np, batch_size, rng, shuffle=True):
-                self.params, self.opt_state, loss = train_step(self.params, self.opt_state, jnp.asarray(batch))
+                if data_parallel and len(batch) % n_devices == 0:
+                    params_parallel, opt_state_parallel, loss = train_step_parallel(
+                        params_parallel,
+                        opt_state_parallel,
+                        self._shard_batch(batch, n_devices),
+                    )
+                    loss = loss[0]
+                else:
+                    if data_parallel:
+                        self.params = self._unreplicate(params_parallel)
+                        self.opt_state = self._unreplicate(opt_state_parallel)
+                    self.params, self.opt_state, loss = train_step(self.params, self.opt_state, jnp.asarray(batch))
+                    if data_parallel:
+                        params_parallel = jax.device_put_replicated(self.params, devices)
+                        opt_state_parallel = jax.device_put_replicated(self.opt_state, devices)
                 epoch_losses.append(float(loss))
             train_loss = float(np.mean(epoch_losses)) if epoch_losses else float("nan")
-            eval_losses = [float(eval_step(self.params, jnp.asarray(batch))) for batch in self._batches(test_np, batch_size, rng, shuffle=False)]
+            eval_losses = []
+            for batch in self._batches(test_np, batch_size, rng, shuffle=False):
+                if data_parallel and len(batch) % n_devices == 0:
+                    loss = eval_step_parallel(params_parallel, self._shard_batch(batch, n_devices))[0]
+                else:
+                    params = self._unreplicate(params_parallel) if data_parallel else self.params
+                    loss = eval_step(params, jnp.asarray(batch))
+                eval_losses.append(float(loss))
             test_loss = float(np.mean(eval_losses)) if eval_losses else train_loss
             train_losses.append(train_loss)
             test_losses.append(test_loss)
             print(f"Epoch {epoch + 1}/{n_epochs}: train_loss={train_loss:.6f} test_loss={test_loss:.6f}")
+            if data_parallel:
+                self.params = self._unreplicate(params_parallel)
+                self.opt_state = self._unreplicate(opt_state_parallel)
             probe_np = test_np[: min(8, len(test_np), batch_size)]
             diag = diag_step(self.params, jnp.asarray(probe_np))
             diag = {key: float(jax.block_until_ready(value)) for key, value in diag.items()}
@@ -361,6 +493,7 @@ class FieldTransformation:
                 f"inverse_diag: "
                 f"max_final_diff={diag['max_final_diff']:.2e} "
                 f"mean_final_diff={diag['mean_final_diff']:.2e} "
+                f"n_not_converged={diag['n_not_converged']:.0f} "
                 f"round_trip_mean_abs_err={diag['round_trip_mean_abs_err']:.2e}"
             )
             if test_loss < best_loss:
@@ -372,6 +505,9 @@ class FieldTransformation:
                 if bad_epochs >= int(self.hyperparams.get("early_stop_patience", 20)):
                     print("Early stopping")
                     break
+        if data_parallel:
+            self.params = self._unreplicate(params_parallel)
+            self.opt_state = self._unreplicate(opt_state_parallel)
         tag = f"train_beta{format_beta(train_beta)}_{self.save_tag}"
         np.savetxt(self.dump_dir / f"train_loss_{tag}.csv", np.asarray(train_losses), fmt="%.8e")
         np.savetxt(self.dump_dir / f"test_loss_{tag}.csv", np.asarray(test_losses), fmt="%.8e")
@@ -384,3 +520,10 @@ class FieldTransformation:
         fig.tight_layout()
         fig.savefig(self.plot_dir / f"cnn_loss_{tag}.pdf", transparent=True)
         plt.close(fig)
+
+    def _parallel_train_step(self, params: Params, opt_state: Any, batch: Array) -> tuple[Params, Any, Array]:
+        loss, grads = jax.value_and_grad(self.loss_fn_with_params)(params, batch, self.train_beta)
+        grads = jax.lax.pmean(grads, axis_name="devices")
+        loss = jax.lax.pmean(loss, axis_name="devices")
+        updates, opt_state = self.optimizer.update(grads, opt_state, params)
+        return optax.apply_updates(params, updates), opt_state, loss

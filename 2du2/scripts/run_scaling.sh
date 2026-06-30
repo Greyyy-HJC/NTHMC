@@ -38,6 +38,7 @@ TRAIN_N_EPOCHS=${TRAIN_N_EPOCHS:-16}
 TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-64}
 TRAIN_N_SUBSETS=${TRAIN_N_SUBSETS:-8}
 TRAIN_N_WORKERS=${TRAIN_N_WORKERS:-0}
+TRAIN_DATA_PARALLEL=${TRAIN_DATA_PARALLEL:-0}
 SKIP_EXISTING_MODELS=${SKIP_EXISTING_MODELS:-0}
 
 EVAL_N_THERMALIZATION=${EVAL_N_THERMALIZATION:-10}
@@ -62,8 +63,6 @@ MAX_LAG=${MAX_LAG:-20}
 EVAL_NO_TUNE_STEP_SIZE=${EVAL_NO_TUNE_STEP_SIZE:-1}
 EVAL_ACCEPT_RATE_MIN=${EVAL_ACCEPT_RATE_MIN:-0.55}
 EVAL_ACCEPT_RATE_MAX=${EVAL_ACCEPT_RATE_MAX:-0.95}
-EVAL_FTHMC_COMPILE=${EVAL_FTHMC_COMPILE:-0}
-EVAL_FTHMC_COMPILE_BACKEND=${EVAL_FTHMC_COMPILE_BACKEND:-"inductor"}
 SKIP_EXISTING_EVALS=${SKIP_EXISTING_EVALS:-0}
 
 GAUGE_NO_TUNE_ARGS=()
@@ -76,9 +75,9 @@ if [[ "${EVAL_NO_TUNE_STEP_SIZE}" == "1" ]]; then
     EVAL_NO_TUNE_ARGS=(--no_tune_step_size)
 fi
 
-EVAL_FTHMC_COMPILE_ARGS=()
-if [[ "${EVAL_FTHMC_COMPILE}" == "1" ]]; then
-    EVAL_FTHMC_COMPILE_ARGS=(--if_compile --compile_backend "${EVAL_FTHMC_COMPILE_BACKEND}")
+TRAIN_DATA_PARALLEL_ARGS=()
+if [[ "${TRAIN_DATA_PARALLEL}" == "1" ]]; then
+    TRAIN_DATA_PARALLEL_ARGS=(--data_parallel)
 fi
 
 gauge_config_path() {
@@ -285,7 +284,8 @@ run_training() {
             --model_tag "${MODEL_TAG}" \
             --save_tag "${save_tag}" \
             --rand_seed "${seed}" \
-            --device "${DEVICE}"
+            --device "${DEVICE}" \
+            "${TRAIN_DATA_PARALLEL_ARGS[@]}"
     )
 }
 
@@ -337,8 +337,7 @@ run_fthmc_evaluation() {
             --model_tag "${MODEL_TAG}" \
             --save_tag "${save_tag}" \
             --device "${DEVICE}" \
-            "${EVAL_NO_TUNE_ARGS[@]}" \
-            "${EVAL_FTHMC_COMPILE_ARGS[@]}"
+            "${EVAL_NO_TUNE_ARGS[@]}"
     )
 }
 

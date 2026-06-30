@@ -104,8 +104,6 @@ class HMCU1FT:
         field_transformation,
         compute_jac_logdet,
         observable_field_transformation=None,
-        force_field_transformation=None,
-        force_compute_jac_logdet=None,
         device: str = "cpu",
         tune_step_size: bool = True,
         seed: int = 0,

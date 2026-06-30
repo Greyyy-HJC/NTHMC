@@ -42,15 +42,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save_tag", type=str, default=None)
     parser.add_argument("--rand_seed", type=int, default=1331)
     parser.add_argument("--if_check_jac", action="store_true")
-    parser.add_argument("--if_compile", action="store_true")
     parser.add_argument("--lr", type=float, default=None)
     parser.add_argument("--weight_decay", type=float, default=None)
     parser.add_argument("--max_grad_norm", type=float, default=None)
     parser.add_argument("--plateau_factor", type=float, default=None)
     parser.add_argument("--plateau_patience", type=int, default=None)
     parser.add_argument("--early_stop_patience", type=int, default=None)
+    parser.add_argument("--inverse_max_iters", type=int, default=None)
+    parser.add_argument("--inverse_tol", type=float, default=None)
     parser.add_argument("--loss_weights", type=float, nargs=4, default=None, metavar=("W2", "W4", "W6", "W8"))
     parser.add_argument("--checkpoint_delta", action="store_true")
+    parser.add_argument("--data_parallel", action="store_true")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "gpu", "cuda"])
     return parser.parse_args()
 
@@ -61,9 +63,6 @@ def load_split_links(data_path: Path) -> np.ndarray:
 
 def main() -> None:
     args = parse_args()
-    if args.if_compile and args.if_check_jac:
-        raise ValueError("--if_compile cannot be combined with --if_check_jac")
-
     start_time = time.time()
     save_tag = args.save_tag or f"base_train_b{format_beta(args.min_beta)}_L{args.lattice_size}_{args.rand_seed}"
     set_seed(args.rand_seed)
@@ -93,6 +92,10 @@ def main() -> None:
         hyperparams["patience"] = float(args.plateau_patience)
     if args.early_stop_patience is not None:
         hyperparams["early_stop_patience"] = args.early_stop_patience
+    if args.inverse_max_iters is not None:
+        hyperparams["inverse_max_iters"] = args.inverse_max_iters
+    if args.inverse_tol is not None:
+        hyperparams["inverse_tol"] = args.inverse_tol
     if args.loss_weights is not None:
         hyperparams["loss_weights"] = tuple(args.loss_weights)
     if args.checkpoint_delta:
@@ -119,7 +122,6 @@ def main() -> None:
         plot_dir=plot_dir,
         dump_dir=dump_dir,
         hyperparams=hyperparams,
-        compile_enabled=args.if_compile,
     )
     print(f"resolved hyperparams: {field_transform.hyperparams}")
 
@@ -144,7 +146,14 @@ def main() -> None:
         print(f"Training data shape: {tuple(train_data.shape)}")
         print(f"Testing data shape: {tuple(test_data.shape)}")
 
-        field_transform.train(train_data, test_data, float(train_beta), n_epochs=args.n_epochs, batch_size=args.batch_size)
+        field_transform.train(
+            train_data,
+            test_data,
+            float(train_beta),
+            n_epochs=args.n_epochs,
+            batch_size=args.batch_size,
+            data_parallel=args.data_parallel,
+        )
         print(f">>> Completed beta={beta_tag} in {datetime.timedelta(seconds=int(time.time() - beta_start))}")
         print(f">>> Total elapsed: {datetime.timedelta(seconds=int(time.time() - start_time))}")
 

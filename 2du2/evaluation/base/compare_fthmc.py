@@ -48,8 +48,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save_tag", type=str, required=True)
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "gpu", "cuda"])
     parser.add_argument("--no_tune_step_size", action="store_true")
-    parser.add_argument("--if_compile", action="store_true")
-    parser.add_argument("--compile_backend", type=str, default="inductor")
     return parser.parse_args()
 
 
@@ -88,16 +86,8 @@ def main() -> None:
 
     model_load_start = time.time()
     field_transform.load_best_model(args.train_beta)
-    field_transform.freeze_models_for_eval()
     model_load_time = time.time() - model_load_start
     print(f">>> Model loaded in {model_load_time:.2f} seconds")
-    if args.if_compile:
-        field_transform.enable_eval_compile(backend=args.compile_backend)
-        force_field_transformation = field_transform.field_transformation_compiled
-        force_compute_jac_logdet = field_transform.compute_jac_logdet_compiled
-    else:
-        force_field_transformation = None
-        force_compute_jac_logdet = None
 
     hmc = HMCU2FT(
         args.lattice_size,
@@ -108,8 +98,6 @@ def main() -> None:
         field_transformation=field_transform.field_transformation,
         compute_jac_logdet=field_transform.compute_jac_logdet,
         observable_field_transformation=field_transform.field_transformation,
-        force_field_transformation=force_field_transformation,
-        force_compute_jac_logdet=force_compute_jac_logdet,
         device=device,
         tune_step_size=not args.no_tune_step_size,
         seed=args.rand_seed,

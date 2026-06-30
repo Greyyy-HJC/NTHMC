@@ -37,16 +37,16 @@ artifacts/models/      # JAX .npz checkpoints
 ## Entry Points
 
 - `2du*/gauge_generation/generate.py`: generate gauge configurations with JAX HMC.
-- `2du*/model_training/train.py`: train JAX field-transform checkpoints with Optax and save `.npz`.
+- `2du*/model_training/train.py`: train JAX field-transform checkpoints with Optax and save `.npz`; `--data_parallel` enables single-node local-device `pmap` training.
 - `2du*/evaluation/base/compare_fthmc.py`: evaluate a trained field transform with JAX FT-HMC.
 - `2du*/evaluation/hmc/compare_hmc.py`: evaluate standard JAX HMC.
 - `2du*/scripts/run_scaling.sh`: run gauge, training, HMC, and FT-HMC scaling workflows.
 
-For GPU runs, install `jax[cuda12]` and `optax`. CLI `--device cuda` is accepted as an alias for JAX `gpu`; CPU remains available.
+For GPU runs, install `jax[cuda12]` and `optax`. CLI `--device cuda` is accepted as an alias for JAX `gpu`; CPU remains available. Training defaults to one JAX device unless `--data_parallel` is set.
 
 U(1) stores generated configs as compact angle arrays `[N, 2, L, L]`. U(1) field transforms use `base` and `addcos` CNN tags and exact analytic Jacobian log determinants.
 
-U(2) stores generated configs as complex `2x2` matrices `[N, 2, L, L, 2, 2]`; training converts them to the internal split phase/quaternion representation. The current JAX U(2) FT path uses an exact identity transform scaffold with zero Jacobian, while standard U(2) HMC, observables, group ops, and Wilson force are JAX-native.
+U(2) stores generated configs as complex `2x2` matrices `[N, 2, L, L, 2, 2]`; training converts them to the internal split phase/quaternion representation. U(2) FT-HMC uses JAX CNN loop coefficients, attached plaquette/rectangle loops, and exact analytic active-link Jacobian blocks; standard U(2) HMC, observables, group ops, and Wilson force are JAX-native.
 
 ## Important Rules
 

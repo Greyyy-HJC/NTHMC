@@ -51,6 +51,7 @@ def init_model_params(key: Array, model_tag: str, *, init_std: float = 0.001) ->
     return {
         "conv_input": _conv_init(key_input, config.input_channels, config.hidden_channels, config.kernel_size, init_std),
         "conv_output": _conv_init(key_output, config.hidden_channels, output_channels, config.kernel_size, init_std),
+        "out_scale": jnp.zeros((output_channels, 1, 1), dtype=jnp.float32),
     }
 
 
@@ -83,7 +84,7 @@ def apply_model(model_params: Params, model_tag: str, plaq_features: Array, rect
     config = NetConfig()
     x = jnp.concatenate([plaq_features, rect_features], axis=1)
     x = gelu(circular_conv2d_nchw(x, model_params["conv_input"]))
-    x = circular_conv2d_nchw(x, model_params["conv_output"])
+    x = circular_conv2d_nchw(x, model_params["conv_output"]) * model_params["out_scale"][jnp.newaxis, ...]
     if model_tag == "base":
         x = jnp.arctan(x) / math.pi / 3
         plaq_sin_coeffs = x[:, : config.plaq_output_channels]

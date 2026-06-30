@@ -6,6 +6,10 @@ This is an append-only development history for NTHMC.
 
 - Migrated the active codebase to JAX-only: U(1)/U(2) observables, HMC, FT-HMC entrypoints, training scripts, shell workflows, dependencies, and tests no longer use the previous training/evaluation stack.
 - Switched model checkpoints to JAX `.npz`, removed incompatible old model artifacts, and made `2du1`/`2du2` training use Optax with single-device JAX execution.
+- Restored the nontrivial U(2) neural FT path in JAX with attached plaquette/rectangle loops and analytic tangent-propagated active-link Jacobian blocks, avoiding local autodiff Jacobian construction.
+- Kept autodiff Jacobian construction behind `if_check_jac=True` for U(1)/U(2) diagnostic checks only; normal training and evaluation use the analytic Jacobian paths.
+- Removed the U(1) `if_identity_init` knob and switched U(1) models to the same default identity-start output gate pattern as U(2); added tolerance-checked inverse iteration with diagnostics and tunable `inverse_max_iters`/`inverse_tol` for U(1)/U(2) training.
+- Added opt-in local-device JAX `pmap` training via `--data_parallel` for U(1)/U(2), removed leftover no-op JAX compile wrappers, and updated U(2) PBS generation scripts away from Torch/Fabric-era launch flags.
 - Kept the historical benchmark summary in `presentation/jax_benchmark_summary.md`; updated `README.md` and `SPEC.md` to describe the current JAX-only structure.
 
 ## 2026-06-30 Historical JAX Probe
