@@ -10,12 +10,21 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "torch",
+    "jax",
     "lightning",
     "numpy",
     "scipy",
     "matplotlib",
     "tqdm",
     "gvar",
+]
+
+[project.optional-dependencies]
+jax-cuda12 = [
+    "jax[cuda12]",
+]
+notebook = [
+    "ipykernel",
 ]
 
 [tool.setuptools.packages.find]

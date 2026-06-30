@@ -1,4 +1,5 @@
 torch
+jax[cuda12]
 lightning
 numpy
 scipy

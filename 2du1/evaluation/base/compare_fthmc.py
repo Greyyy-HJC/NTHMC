@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -88,10 +89,13 @@ def main() -> None:
     model_load_time = time.time() - model_load_start
     print(f">>> Model loaded in {model_load_time:.2f} seconds")
     if args.if_compile:
+        compile_setup_start = time.time()
         field_transform.enable_eval_compile(backend=args.compile_backend)
+        compile_setup_time = time.time() - compile_setup_start
         force_field_transformation = field_transform.field_transformation_compiled
         force_compute_jac_logdet = field_transform.compute_jac_logdet_compiled
     else:
+        compile_setup_time = 0.0
         force_field_transformation = None
         force_compute_jac_logdet = None
 
@@ -149,7 +153,36 @@ def main() -> None:
         [acceptance_rate],
         fmt="%.6e",
     )
-    print(f">>> Total FT-HMC time: {model_load_time + therm_time + run_time:.2f} seconds")
+    benchmark = {
+        "backend": "pytorch",
+        "lattice_size": args.lattice_size,
+        "beta": args.beta,
+        "train_beta": args.train_beta,
+        "n_thermalization": args.n_thermalization,
+        "n_configs": args.n_configs,
+        "n_steps": args.n_steps,
+        "ft_step_size": args.ft_step_size,
+        "rand_seed": args.rand_seed,
+        "model_tag": args.model_tag,
+        "save_tag": args.save_tag,
+        "device": device,
+        "if_compile": args.if_compile,
+        "compile_backend": args.compile_backend if args.if_compile else None,
+        "model_load_time_sec": model_load_time,
+        "compile_setup_time_sec": compile_setup_time,
+        "thermalization_time_sec": therm_time,
+        "run_time_sec": run_time,
+        "total_time_sec": model_load_time + compile_setup_time + therm_time + run_time,
+        "therm_acceptance_rate": therm_acceptance_rate,
+        "acceptance_rate": acceptance_rate,
+        "plaq_mean": float(np.mean(plaq)) if len(plaq) else float("nan"),
+        "topo_mean": float(np.mean(topo)) if len(topo) else float("nan"),
+        "topo_std": float(np.std(topo)) if len(topo) else float("nan"),
+    }
+    benchmark_path = dump_dir / f"benchmark_fthmc_L{args.lattice_size}_beta{beta_tag}_nsteps{args.n_steps}_{args.save_tag}.json"
+    benchmark_path.write_text(json.dumps(benchmark, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(f">>> Benchmark JSON written to {benchmark_path}")
+    print(f">>> Total FT-HMC time: {benchmark['total_time_sec']:.2f} seconds")
 
 
 if __name__ == "__main__":

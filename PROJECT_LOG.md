@@ -2,6 +2,14 @@
 
 This is an append-only development history for NTHMC.
 
+## 2026-06-30
+
+- Added an experimental U(1) JAX FT-HMC backend in `src/nthmc/u1/jax_backend.py`, including JAX observables/action/force, frozen PyTorch checkpoint conversion, JAX CNN inference for `base`/`addcos`, analytic Jacobian logdet, and a JIT-compiled thermalization/run chain.
+- Added `2du1/evaluation/jax/compare_fthmc.py` with benchmark JSON output under the new `2du1/evaluation/jax` workspace, CUDA-wheel library-path bootstrapping before JAX import, and matching benchmark JSON output in the existing PyTorch `2du1/evaluation/base/compare_fthmc.py` baseline.
+- Added focused U(1) JAX backend tests and documented the JAX path in `SPEC.md`; deferred 2du2 JAX migration until 2du1 benchmarks show a clear steady-state speedup.
+- Added `presentation/jax_optimization.ipynb`, a checkpoint-free PyTorch-vs-JAX notebook that demonstrates U(1) forward/Jacobian/force consistency and the GPU JIT steady-state speedup on the transformed-force path.
+- Added `presentation/jax_benchmark_summary.md` summarizing L=8/L=16 PyTorch-compiled versus JAX FT-HMC evaluation benchmarks, plus a small 2du2 U(2) Wilson-force PyTorch-vs-JAX probe with compile-time caveats and steady-state speedups.
+
 ## 2026-06-17
 
 - Think of translate to tensorflow with jit.
