@@ -37,7 +37,6 @@ SKIP_EXISTING_GAUGES=${SKIP_EXISTING_GAUGES:-0}
 TRAIN_N_EPOCHS=${TRAIN_N_EPOCHS:-16}
 TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-64}
 TRAIN_N_SUBSETS=${TRAIN_N_SUBSETS:-8}
-TRAIN_N_WORKERS=${TRAIN_N_WORKERS:-0}
 TRAIN_DATA_PARALLEL=${TRAIN_DATA_PARALLEL:-0}
 SKIP_EXISTING_MODELS=${SKIP_EXISTING_MODELS:-0}
 
@@ -280,7 +279,6 @@ run_training() {
             --n_epochs "${TRAIN_N_EPOCHS}" \
             --batch_size "${TRAIN_BATCH_SIZE}" \
             --n_subsets "${TRAIN_N_SUBSETS}" \
-            --n_workers "${TRAIN_N_WORKERS}" \
             --model_tag "${MODEL_TAG}" \
             --save_tag "${save_tag}" \
             --rand_seed "${seed}" \

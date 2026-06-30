@@ -372,7 +372,7 @@ q_p=(q_{0,p},q_{1,p},q_{2,p},q_{3,p}).\]</div>
 =
 q_{0,p}(x)\cos\phi_p(x).\]</div>
       <p>This is exactly the code expression</p>
-      <pre><code class="language-python">torch.cos(plaquettes[..., 0]) * plaquettes[..., 1]</code></pre>
+      <pre><code class="language-python">jnp.cos(plaquettes[..., 0]) * plaquettes[..., 1]</code></pre>
       <p>because <code>plaquettes[..., 0]</code> is the U(1) phase \(\phi_p\) and <code>plaquettes[..., 1]</code> is the scalar quaternion component \(q_{0,p}\).</p>
       <p>Therefore <code>src/nthmc/u2/u2_observables.py::action_from_field_batch</code> computes</p>
       <div class="math-block">\[S_{U(2)}(U)
@@ -689,7 +689,7 @@ k^{(p,\cos)}_l\sin a_l
       <div class="math-block">\[\log\det J_s
 =
 \sum_{\ell\in s}\log J_\ell,\]</div>
-      <p>which is the <code>torch.log(1 + plaq_jac_shift + rect_jac_shift)</code> expression in <code>compute_jac_logdet</code>.</p>
+      <p>which is the <code>jnp.log(1 + plaq_jac_shift + rect_jac_shift)</code> expression in <code>compute_jac_logdet</code>.</p>
       <hr>
       <h2 id="u-2-field-transformation">U(2) Field Transformation</h2>
       <p>For U(2), each link is represented in the split convention</p>

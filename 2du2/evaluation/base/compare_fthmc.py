@@ -76,7 +76,6 @@ def main() -> None:
         device=device,
         n_subsets=8,
         if_check_jac=False,
-        num_workers=0,
         model_tag=args.model_tag,
         save_tag=args.save_tag,
         model_dir=model_dir,

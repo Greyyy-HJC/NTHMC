@@ -48,7 +48,7 @@ No import swap is needed. Before the first edit, snapshot `field_transform.py` s
 
 **In `models.py`:**
 
-- New `nn.Module` classes and `choose_model` tags
+- New JAX model parameter trees and `choose_model` tags
 - `NetConfig`: `hidden_channels`, `kernel_size`, depth, multiscale branches
 - Coefficient heads, tanh caps, `_LayerScale` gain
 - Existing starting points: `base`, `wide`, `cap`, `mscap`
@@ -152,7 +152,7 @@ flowchart TD
 | **G4 Step-size probe** | Short FT-HMC sweep (see Section 8) | Find `ft_step_size` with acceptance ∈ [0.55, 0.95] |
 | **G5 Formal eval acceptance** | T1/T2/T3 `compare_fthmc.py` run | Acceptance ∈ [0.55, 0.95] at chosen `FT_STEP_SIZE` |
 
-**Do not** use `--if_compile` with `--if_check_jac`. Skip `--if_compile` during step-size probes.
+Run Jacobian checks and step-size probes through the normal JAX CLI; there is no separate compile flag.
 
 ## 6. Tiered compute budget
 
@@ -270,7 +270,7 @@ python compare_fthmc.py \
 4. Read `dumps/accept_rate_fthmc_L16_beta*_nsteps10_*.csv`
 5. Record the chosen value in the **step-size log** (Section 12); use it in `sub_gen.sh` for T1/T2/T3
 
-**Probe settings:** `n_configs` 128, single seed `1029`, no `--if_compile`. (Acceptance from probe is coarse; T1 at 512 configs re-validates before scoring R_gamma / R_deltaQ.)
+**Probe settings:** `n_configs` 128, single seed `1029`. (Acceptance from probe is coarse; T1 at 512 configs re-validates before scoring R_gamma / R_deltaQ.)
 
 ### Starting sweep hints (L=16)
 
@@ -346,7 +346,7 @@ Four orthogonal directions for the search. Each targets a different mechanism, s
 
 - **Hypothesis:** topological barriers correlate over distances larger than the base receptive field (`LocalNet` 3×3×2 conv ≈ 5 sites). A larger effective RF lets the transform reshape the action across the whole tunneling region.
 - **Mechanism:** spatial expressivity.
-- **Change:** add a new `nn.Module` + `choose_model` tag — a residual stack of `padding_mode="circular"` 3×3 convs (depth 3–4), optionally a dilation pyramid. Reuse the split heads, the 90% caps, GELU, and the zero-init `_LayerScale` so it still starts at identity. Start from `MultiScaleCapLocalNet` (`mscap`), which already mixes local / dilated / point branches.
+- **Change:** add a new JAX model tag — a residual stack of circular 3x3 convs (depth 3-4), optionally a dilation pyramid. Reuse the split heads, the 90% caps, GELU, and the zero-init output gate so it still starts at identity. Start from the existing multiscale design, which already mixes local / dilated / point branches.
 - **Risk:** at L=16 a too-large RF wraps the torus and over-smooths; watch G3 saturation (`k0_sat_frac`, `k1_sat_frac`) and inverse convergence.
 
 ### D2 — Coefficient cap & gate strength
@@ -448,7 +448,7 @@ Add columns for β=14, β=16 at T2/T3 as needed.
 cd 2du2/model_training
 python train.py \
     --lattice_size 16 --min_beta 8.0 --max_beta 8.0 --beta_gap 0.5 \
-    --n_epochs 16 --batch_size 64 --n_subsets 8 --n_workers 0 \
+    --n_epochs 16 --batch_size 64 --n_subsets 8 \
     --model_tag base --save_tag base_train_b8.0_L16_1029 --rand_seed 1029 \
     --lr 1e-3 --max_grad_norm 5 \
     --plateau_patience 2 --early_stop_patience 5 \

@@ -102,7 +102,7 @@ def apply_model(model_params: Params, model_tag: str, plaq_features: Array, rect
 
 
 def choose_model(model_tag: str) -> str:
-    """Compatibility helper for old callers."""
+    """Validate and return a supported U(1) model tag."""
     if model_tag not in {"base", "addcos"}:
         raise ValueError(f"Invalid U(1) model tag: {model_tag!r}")
     return model_tag

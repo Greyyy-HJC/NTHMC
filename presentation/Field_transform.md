@@ -136,7 +136,7 @@ $$
 
 This is exactly the code expression
 ```python
-torch.cos(plaquettes[..., 0]) * plaquettes[..., 1]
+jnp.cos(plaquettes[..., 0]) * plaquettes[..., 1]
 ```
 because `plaquettes[..., 0]` is the U(1) phase $\phi_p$ and
 `plaquettes[..., 1]` is the scalar quaternion component $q_{0,p}$.
@@ -661,7 +661,7 @@ $$
 =
 \sum_{\ell\in s}\log J_\ell,
 $$
-which is the `torch.log(1 + plaq_jac_shift + rect_jac_shift)` expression in
+which is the `jnp.log(1 + plaq_jac_shift + rect_jac_shift)` expression in
 `compute_jac_logdet`.
 
 

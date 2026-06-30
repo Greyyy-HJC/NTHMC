@@ -36,7 +36,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--n_epochs", type=int, default=16)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--n_subsets", type=int, default=8)
-    parser.add_argument("--n_workers", type=int, default=0)
     parser.add_argument("--model_tag", type=str, default="base")
     parser.add_argument("--save_tag", type=str, default=None)
     parser.add_argument("--rand_seed", type=int, default=1331)
@@ -104,7 +103,6 @@ def main() -> None:
         device=device,
         n_subsets=args.n_subsets,
         if_check_jac=args.if_check_jac,
-        num_workers=args.n_workers,
         model_tag=args.model_tag,
         save_tag=save_tag,
         model_dir=model_dir,

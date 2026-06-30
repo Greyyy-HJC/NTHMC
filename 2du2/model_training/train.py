@@ -37,7 +37,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--n_epochs", type=int, default=16)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--n_subsets", type=int, default=8)
-    parser.add_argument("--n_workers", type=int, default=0)
     parser.add_argument("--model_tag", type=str, default="base")
     parser.add_argument("--save_tag", type=str, default=None)
     parser.add_argument("--rand_seed", type=int, default=1331)
@@ -51,7 +50,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--inverse_max_iters", type=int, default=None)
     parser.add_argument("--inverse_tol", type=float, default=None)
     parser.add_argument("--loss_weights", type=float, nargs=4, default=None, metavar=("W2", "W4", "W6", "W8"))
-    parser.add_argument("--checkpoint_delta", action="store_true")
     parser.add_argument("--data_parallel", action="store_true")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "gpu", "cuda"])
     return parser.parse_args()
@@ -98,8 +96,6 @@ def main() -> None:
         hyperparams["inverse_tol"] = args.inverse_tol
     if args.loss_weights is not None:
         hyperparams["loss_weights"] = tuple(args.loss_weights)
-    if args.checkpoint_delta:
-        hyperparams["checkpoint_delta"] = True
 
     print("=" * 60)
     print(">>> U(2) JAX field-transformation training")
@@ -115,7 +111,6 @@ def main() -> None:
         device=device,
         n_subsets=args.n_subsets,
         if_check_jac=args.if_check_jac,
-        num_workers=args.n_workers,
         model_tag=args.model_tag,
         save_tag=save_tag,
         model_dir=model_dir,

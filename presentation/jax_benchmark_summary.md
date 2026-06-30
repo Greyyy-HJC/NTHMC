@@ -1,6 +1,6 @@
 # JAX Benchmark Summary
 
-This note summarizes the current PyTorch-vs-JAX probes. The `2du1` benchmark is
+This note summarizes historical PyTorch-vs-JAX migration probes. The `2du1` benchmark is
 an FT-HMC evaluation benchmark for a fixed trained field transform. The `2du2`
 benchmark is a smaller U(2) Wilson-action force probe because a full JAX 2du2
 FT-HMC backend has not been implemented yet.
@@ -9,10 +9,10 @@ FT-HMC backend has not been implemented yet.
 
 - System: `2du1` U(1) FT-HMC evaluation only; no training.
 - Checkpoints: existing `base_scaling_train_b3.0_L8_1029` and `base_scaling_train_b3.0_L16_1029`.
-- Device: NVIDIA GPU, PyTorch CUDA and JAX CUDA backend.
+- Device: NVIDIA GPU, historical PyTorch CUDA baseline and JAX CUDA backend.
 - Parameters: `beta=train_beta=3.0`, `n_steps=10`, `n_thermalization=10`, `n_configs=64`, seed `1029`.
 - Step sizes: `L=8` uses `ft_step_size=0.4`; `L=16` uses `ft_step_size=0.35`.
-- PyTorch mode: matches the current `2du1/evaluation/base/compare_fthmc.py --if_compile` policy, compiling only the force-path field transformation and Jacobian callables with `torch.compile(..., backend="inductor")`.
+- Historical PyTorch mode: compiled only the force-path field transformation and Jacobian callables with `torch.compile(..., backend="inductor")`.
 - JAX mode: compiles the full fixed-shape thermalization and run chain with `jax.jit`.
 
 ### Timing Results

@@ -51,20 +51,17 @@ class FieldTransformation:
         device: str = "cpu",
         n_subsets: int = 8,
         if_check_jac: bool = False,
-        num_workers: int = 0,
         model_tag: str = "base",
         save_tag: str | None = None,
         model_dir: str | Path = "artifacts/models",
         plot_dir: str | Path = "plots",
         dump_dir: str | Path = "dumps",
         hyperparams: dict[str, Any] | None = None,
-        **_: Any,
     ) -> None:
         self.lattice_size = lattice_size
         self.device = device
         self.n_subsets = n_subsets
         self.if_check_jac = if_check_jac
-        self.num_workers = num_workers
         self.model_tag = model_tag
         self.save_tag = save_tag or "opt"
         self.model_dir = Path(model_dir)
