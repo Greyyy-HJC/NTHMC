@@ -5,7 +5,6 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd -- "${SCRIPT_DIR}/../.." && pwd)
 
 PYTHON_BIN=${PYTHON_BIN:-"${REPO_ROOT}/.venv/bin/python"}
-TORCHRUN_BIN=${TORCHRUN_BIN:-"${REPO_ROOT}/.venv/bin/torchrun"}
 
 LATTICE_SIZES_RAW=${LATTICE_SIZES:-"8 16"}
 BETAS_RAW=${BETAS:-"3.0 4.0 5.0 6.0"}
@@ -30,10 +29,6 @@ TRAIN_N_EPOCHS=${TRAIN_N_EPOCHS:-16}
 TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-64}
 TRAIN_N_SUBSETS=${TRAIN_N_SUBSETS:-8}
 TRAIN_N_WORKERS=${TRAIN_N_WORKERS:-0}
-TRAIN_NPROC_PER_NODE=${TRAIN_NPROC_PER_NODE:-1}
-TRAIN_ACCELERATOR=${TRAIN_ACCELERATOR:-"cuda"}
-TRAIN_STRATEGY=${TRAIN_STRATEGY:-"ddp"}
-TRAIN_DEVICES=${TRAIN_DEVICES:-"auto"}
 SKIP_EXISTING_MODELS=${SKIP_EXISTING_MODELS:-1}
 SKIP_EXISTING_EVALS=${SKIP_EXISTING_EVALS:-1}
 
@@ -61,7 +56,7 @@ gauge_config_path() {
 best_model_path() {
     local lattice_size=$1
     local seed=$2
-    echo "${REPO_ROOT}/2du1/artifacts/models/best_model_train_beta${TRAIN_BETA}_base_scaling_train_b${TRAIN_BETA}_L${lattice_size}_${seed}.pt"
+    echo "${REPO_ROOT}/2du1/artifacts/models/best_model_train_beta${TRAIN_BETA}_base_scaling_train_b${TRAIN_BETA}_L${lattice_size}_${seed}.npz"
 }
 
 hmc_topo_path() {
@@ -112,18 +107,20 @@ PY
 has_completed_training() {
     local model_path=$1
     "${PYTHON_BIN}" - "${model_path}" "${TRAIN_N_EPOCHS}" <<'PY'
+import json
 import sys
 from pathlib import Path
 
-import torch
+import numpy as np
 
 path = Path(sys.argv[1])
 required_epochs = int(sys.argv[2])
 if not path.exists():
     raise SystemExit(1)
 
-checkpoint = torch.load(path, map_location="cpu", weights_only=False)
-epoch = checkpoint.get("epoch") if isinstance(checkpoint, dict) else None
+with np.load(path, allow_pickle=False) as data:
+    metadata = json.loads(str(data["metadata_json"]))
+epoch = metadata.get("epoch")
 if epoch is None:
     raise SystemExit(1)
 
@@ -178,7 +175,7 @@ run_training() {
 
     (
         cd "${REPO_ROOT}/2du1/model_training"
-        "${TORCHRUN_BIN}" --standalone --nproc_per_node="${TRAIN_NPROC_PER_NODE}" train.py \
+        "${PYTHON_BIN}" train.py \
             --lattice_size "${lattice_size}" \
             --min_beta "${TRAIN_BETA}" \
             --max_beta "${TRAIN_BETA}" \
@@ -190,9 +187,7 @@ run_training() {
             --model_tag "${MODEL_TAG}" \
             --save_tag "${save_tag}" \
             --rand_seed "${seed}" \
-            --accelerator "${TRAIN_ACCELERATOR}" \
-            --strategy "${TRAIN_STRATEGY}" \
-            --devices "${TRAIN_DEVICES}" \
+            --device "${DEVICE}" \
             --if_identity_init
     )
 }

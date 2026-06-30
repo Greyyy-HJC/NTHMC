@@ -7,20 +7,27 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import torch
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from nthmc.u1.plotting import hmc_summary
-from nthmc.u1.u1_observables import format_beta, set_seed
-from nthmc.u1.u1_hmc import HMCU1
+from nthmc.core.jax_env import bootstrap_cuda_wheel_paths, preconfigure_platform_from_argv, set_platform
 
 
 def choose_device(device: str) -> str:
-    if device == "auto":
-        return "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cuda":
+        device = "gpu"
+    if device != "auto":
+        set_platform(device)
     return device
+
+
+bootstrap_cuda_wheel_paths()
+preconfigure_platform_from_argv()
+
+from nthmc.u1.plotting import hmc_summary
+from nthmc.u1.u1_observables import format_beta, set_seed
+from nthmc.u1.u1_hmc import HMCU1
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,7 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--step_size", type=float, default=0.1)
     parser.add_argument("--n_tune_steps", type=int, default=2000)
     parser.add_argument("--rand_seed", type=int, default=1331)
-    parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"])
+    parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "gpu", "cuda"])
     parser.add_argument("--no_tune_step_size", action="store_true")
     parser.add_argument("--max_lag", type=int, default=20)
     return parser.parse_args()
@@ -43,7 +50,6 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     device = choose_device(args.device)
-    torch.set_default_dtype(torch.float32)
     set_seed(args.rand_seed)
 
     script_dir = Path(__file__).resolve().parent
@@ -70,6 +76,7 @@ def main() -> None:
         args.step_size,
         device=device,
         tune_step_size=not args.no_tune_step_size,
+        seed=args.rand_seed,
     )
     theta_thermalized, therm_plaq, therm_acceptance_rate = hmc.thermalize(n_tune_steps=args.n_tune_steps)
     n_iterations = args.store_interval * args.n_configs
@@ -96,7 +103,7 @@ def main() -> None:
     if fig is not None:
         fig.savefig(plot_dir / f"gauge_gen_hmc_L{args.lattice_size}_beta{beta_tag}.pdf", transparent=True)
 
-    np.save(gauge_dir / f"theta_L{args.lattice_size}_beta{beta_tag}.npy", torch.stack(configs).numpy())
+    np.save(gauge_dir / f"theta_L{args.lattice_size}_beta{beta_tag}.npy", np.asarray(configs))
     np.savetxt(dump_dir / f"topo_L{args.lattice_size}_beta{beta_tag}.csv", np.array(topo), fmt="%.6e")
     np.savetxt(dump_dir / f"accept_rate_L{args.lattice_size}_beta{beta_tag}.csv", [acceptance_rate], fmt="%.6e")
     print(">>> Gauge generation completed")

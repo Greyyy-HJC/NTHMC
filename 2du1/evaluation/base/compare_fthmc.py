@@ -9,10 +9,15 @@ import time
 from pathlib import Path
 
 import numpy as np
-import torch
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "src"))
+
+from nthmc.core.jax_env import bootstrap_cuda_wheel_paths, preconfigure_platform_from_argv, set_platform
+
+
+bootstrap_cuda_wheel_paths()
+preconfigure_platform_from_argv()
 
 from nthmc.u1.field_transform import FieldTransformation
 from nthmc.u1.plotting import hmc_summary
@@ -21,8 +26,10 @@ from nthmc.u1.u1_fthmc import HMCU1FT
 
 
 def choose_device(device: str) -> str:
-    if device == "auto":
-        return "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cuda":
+        device = "gpu"
+    if device != "auto":
+        set_platform(device)
     return device
 
 
@@ -40,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rand_seed", type=int, default=1331)
     parser.add_argument("--model_tag", type=str, default="base")
     parser.add_argument("--save_tag", type=str, required=True)
-    parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"])
+    parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "gpu", "cuda"])
     parser.add_argument("--no_tune_step_size", action="store_true")
     parser.add_argument("--if_compile", action="store_true")
     parser.add_argument("--compile_backend", type=str, default="inductor")
@@ -50,7 +57,6 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     device = choose_device(args.device)
-    torch.set_default_dtype(torch.float32)
     set_seed(args.rand_seed)
 
     script_dir = Path(__file__).resolve().parent
@@ -62,7 +68,7 @@ def main() -> None:
         directory.mkdir(parents=True, exist_ok=True)
 
     print("=" * 60)
-    print(">>> U(1) base FT-HMC evaluation")
+    print(">>> U(1) JAX base FT-HMC evaluation")
     for key, value in vars(args).items():
         print(f"{key}: {value}")
     print(f"resolved_device: {device}")
@@ -80,7 +86,6 @@ def main() -> None:
         model_dir=model_dir,
         plot_dir=plot_dir,
         dump_dir=dump_dir,
-        compile_enabled=False,
     )
 
     model_load_start = time.time()
@@ -112,6 +117,7 @@ def main() -> None:
         force_compute_jac_logdet=force_compute_jac_logdet,
         device=device,
         tune_step_size=not args.no_tune_step_size,
+        seed=args.rand_seed,
     )
 
     therm_start = time.time()
@@ -154,7 +160,7 @@ def main() -> None:
         fmt="%.6e",
     )
     benchmark = {
-        "backend": "pytorch",
+        "backend": "jax",
         "lattice_size": args.lattice_size,
         "beta": args.beta,
         "train_beta": args.train_beta,

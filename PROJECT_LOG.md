@@ -4,6 +4,12 @@ This is an append-only development history for NTHMC.
 
 ## 2026-06-30
 
+- Migrated the active codebase to JAX-only: U(1)/U(2) observables, HMC, FT-HMC entrypoints, training scripts, shell workflows, dependencies, and tests no longer use the previous training/evaluation stack.
+- Switched model checkpoints to JAX `.npz`, removed incompatible old model artifacts, and made `2du1`/`2du2` training use Optax with single-device JAX execution.
+- Kept the historical benchmark summary in `presentation/jax_benchmark_summary.md`; updated `README.md` and `SPEC.md` to describe the current JAX-only structure.
+
+## 2026-06-30 Historical JAX Probe
+
 - Added an experimental U(1) JAX FT-HMC backend in `src/nthmc/u1/jax_backend.py`, including JAX observables/action/force, frozen PyTorch checkpoint conversion, JAX CNN inference for `base`/`addcos`, analytic Jacobian logdet, and a JIT-compiled thermalization/run chain.
 - Added `2du1/evaluation/jax/compare_fthmc.py` with benchmark JSON output under the new `2du1/evaluation/jax` workspace, CUDA-wheel library-path bootstrapping before JAX import, and matching benchmark JSON output in the existing PyTorch `2du1/evaluation/base/compare_fthmc.py` baseline.
 - Added focused U(1) JAX backend tests and documented the JAX path in `SPEC.md`; deferred 2du2 JAX migration until 2du1 benchmarks show a clear steady-state speedup.

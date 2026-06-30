@@ -9,11 +9,15 @@ import time
 from pathlib import Path
 
 import numpy as np
-import torch
-from lightning.fabric import Fabric
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "src"))
+
+from nthmc.core.jax_env import bootstrap_cuda_wheel_paths, preconfigure_platform_from_argv, set_platform
+
+
+bootstrap_cuda_wheel_paths()
+preconfigure_platform_from_argv()
 
 from nthmc.u2.field_transform import FieldTransformation
 from nthmc.u2.u2_observables import format_beta, matrix_to_u2, set_seed
@@ -47,15 +51,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--early_stop_patience", type=int, default=None)
     parser.add_argument("--loss_weights", type=float, nargs=4, default=None, metavar=("W2", "W4", "W6", "W8"))
     parser.add_argument("--checkpoint_delta", action="store_true")
-    parser.add_argument("--accelerator", type=str, default="cuda")
-    parser.add_argument("--strategy", type=str, default="ddp")
-    parser.add_argument("--devices", default="auto")
+    parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "gpu", "cuda"])
     return parser.parse_args()
 
 
-def load_split_links(data_path: Path) -> torch.Tensor:
-    matrices = torch.from_numpy(np.load(data_path))
-    return matrix_to_u2(matrices).float()
+def load_split_links(data_path: Path) -> np.ndarray:
+    return np.asarray(matrix_to_u2(np.load(data_path)), dtype=np.float32)
 
 
 def main() -> None:
@@ -65,11 +66,10 @@ def main() -> None:
 
     start_time = time.time()
     save_tag = args.save_tag or f"base_train_b{format_beta(args.min_beta)}_L{args.lattice_size}_{args.rand_seed}"
-    torch.set_default_dtype(torch.float32)
     set_seed(args.rand_seed)
-    fabric = Fabric(accelerator=args.accelerator, strategy=args.strategy, devices=args.devices)
-    fabric.launch()
-    device = str(fabric.device)
+    device = "gpu" if args.device == "cuda" else args.device
+    if device != "auto":
+        set_platform(device)
 
     script_dir = Path(__file__).resolve().parent
     domain_root = script_dir.parent
@@ -98,15 +98,14 @@ def main() -> None:
     if args.checkpoint_delta:
         hyperparams["checkpoint_delta"] = True
 
-    fabric.print("=" * 60)
-    fabric.print(">>> U(2) base field-transformation training")
+    print("=" * 60)
+    print(">>> U(2) JAX field-transformation training")
     for key, value in vars(args).items():
-        fabric.print(f"{key}: {value}")
-    fabric.print(f"save_tag: {save_tag}")
-    fabric.print(f"resolved_device: {device}")
-    fabric.print(f"torch_cuda_device_count: {torch.cuda.device_count()}")
-    fabric.print(f"hyperparams (CLI overrides): {hyperparams}")
-    fabric.print("=" * 60)
+        print(f"{key}: {value}")
+    print(f"save_tag: {save_tag}")
+    print(f"resolved_device: {device}")
+    print(f"hyperparams (CLI overrides): {hyperparams}")
+    print("=" * 60)
 
     field_transform = FieldTransformation(
         args.lattice_size,
@@ -120,16 +119,15 @@ def main() -> None:
         plot_dir=plot_dir,
         dump_dir=dump_dir,
         hyperparams=hyperparams,
-        fabric=fabric,
         compile_enabled=args.if_compile,
     )
-    fabric.print(f"resolved hyperparams: {field_transform.hyperparams}")
+    print(f"resolved hyperparams: {field_transform.hyperparams}")
 
     if args.continue_beta is not None:
         field_transform.load_best_model(args.continue_beta)
-        fabric.print(f">>> Continuing from beta={args.continue_beta}")
+        print(f">>> Continuing from beta={args.continue_beta}")
     else:
-        fabric.print(">>> Training from scratch")
+        print(">>> Training from scratch")
 
     for train_beta in beta_values(args.min_beta, args.max_beta, args.beta_gap):
         beta_start = time.time()
@@ -142,13 +140,13 @@ def main() -> None:
         train_size = int(0.8 * len(data))
         train_data = data[:train_size]
         test_data = data[train_size:]
-        fabric.print(f">>> Loaded {data_path}")
-        fabric.print(f"Training data shape: {tuple(train_data.shape)}")
-        fabric.print(f"Testing data shape: {tuple(test_data.shape)}")
+        print(f">>> Loaded {data_path}")
+        print(f"Training data shape: {tuple(train_data.shape)}")
+        print(f"Testing data shape: {tuple(test_data.shape)}")
 
         field_transform.train(train_data, test_data, float(train_beta), n_epochs=args.n_epochs, batch_size=args.batch_size)
-        fabric.print(f">>> Completed beta={beta_tag} in {datetime.timedelta(seconds=int(time.time() - beta_start))}")
-        fabric.print(f">>> Total elapsed: {datetime.timedelta(seconds=int(time.time() - start_time))}")
+        print(f">>> Completed beta={beta_tag} in {datetime.timedelta(seconds=int(time.time() - beta_start))}")
+        print(f">>> Total elapsed: {datetime.timedelta(seconds=int(time.time() - start_time))}")
 
 
 if __name__ == "__main__":

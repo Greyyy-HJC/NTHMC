@@ -9,9 +9,8 @@ description = "Neural transformed Hybrid Monte Carlo research workflows."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "torch",
-    "jax",
-    "lightning",
+    "jax[cuda12]",
+    "optax",
     "numpy",
     "scipy",
     "matplotlib",
@@ -20,9 +19,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-jax-cuda12 = [
-    "jax[cuda12]",
-]
 notebook = [
     "ipykernel",
 ]

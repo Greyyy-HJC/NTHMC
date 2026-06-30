@@ -1,17 +1,19 @@
-"""Standard HMC for 2D U(1) lattice gauge theory."""
+"""JAX standard HMC for 2D U(1) lattice gauge theory."""
 
 from __future__ import annotations
 
-import numpy as np
-import torch
+from typing import Any
+
+import jax
+import jax.numpy as jnp
 from tqdm import tqdm
 
-from nthmc.u1.u1_observables import plaq_from_field, plaq_mean_from_field, regularize, topo_from_field
+from nthmc.u1.u1_observables import action, plaq_mean_from_field, regularize, topo_from_field
+
+Array = Any
 
 
 class HMCU1:
-    """Hybrid Monte Carlo sampler for 2D U(1)."""
-
     def __init__(
         self,
         lattice_size: int,
@@ -22,144 +24,108 @@ class HMCU1:
         *,
         device: str = "cpu",
         tune_step_size: bool = True,
+        seed: int = 0,
     ) -> None:
         self.lattice_size = lattice_size
-        self.beta = beta
+        self.beta = float(beta)
         self.n_thermalization_steps = n_thermalization_steps
         self.n_steps = n_steps
-        self.dt = step_size
-        self.device = torch.device(device)
+        self.dt = float(step_size)
+        self.device = device
         self.tune_step_size_enabled = tune_step_size
+        self.key = jax.random.PRNGKey(seed)
+        self._compiled_step = None
 
-    def initialize(self) -> torch.Tensor:
-        return torch.zeros([2, self.lattice_size, self.lattice_size], device=self.device)
+    def initialize(self) -> Array:
+        return jnp.zeros((2, self.lattice_size, self.lattice_size), dtype=jnp.float32)
 
-    def action(self, theta: torch.Tensor) -> torch.Tensor:
-        theta_p = regularize(plaq_from_field(theta))
-        action_value = -self.beta * torch.sum(torch.cos(theta_p))
-        assert action_value.dim() == 0
-        return action_value
+    def action(self, theta: Array) -> Array:
+        return action(theta, self.beta)
 
-    def force(self, theta: torch.Tensor) -> torch.Tensor:
-        theta_copy = theta.detach().clone().requires_grad_(True)
-        action_value = self.action(theta_copy)
-        return torch.autograd.grad(action_value, theta_copy)[0].detach()
+    def force(self, theta: Array) -> Array:
+        return jax.grad(self.action)(theta)
 
-    def omelyan(self, theta: torch.Tensor, pi: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def _make_step(self):
+        beta = self.beta
+        n_steps = self.n_steps
+        dt = self.dt
         lam = 0.1931833
-        theta_next = theta
-        pi_next = pi - lam * self.dt * self.force(theta_next)
-        for step_index in range(self.n_steps):
-            theta_next = theta_next + 0.5 * self.dt * pi_next
-            pi_next = pi_next - (1 - 2 * lam) * self.dt * self.force(theta_next)
-            theta_next = theta_next + 0.5 * self.dt * pi_next
-            if step_index != self.n_steps - 1:
-                pi_next = pi_next - 2 * lam * self.dt * self.force(theta_next)
-        pi_next = pi_next - lam * self.dt * self.force(theta_next)
-        return regularize(theta_next), pi_next
 
-    def metropolis_step(self, theta: torch.Tensor) -> tuple[torch.Tensor, bool, float]:
-        pi = torch.randn_like(theta, device=self.device)
-        h_old = self.action(theta) + 0.5 * torch.sum(pi**2)
-        new_theta, new_pi = self.omelyan(theta.clone(), pi.clone())
-        h_new = self.action(new_theta) + 0.5 * torch.sum(new_pi**2)
-        accept_prob = torch.exp(-(h_new - h_old))
-        if torch.rand([], device=self.device) < accept_prob:
-            return new_theta, True, float(h_new.detach().cpu())
-        return theta, False, float(h_old.detach().cpu())
+        def energy(theta: Array, pi: Array) -> Array:
+            return action(theta, beta) + 0.5 * jnp.sum(pi**2)
 
-    def tune_step_size(
-        self,
-        *,
-        n_tune_steps: int = 2000,
-        target_rate: float = 0.75,
-        target_tolerance: float = 0.15,
-        max_attempts: int = 10,
-        theta: torch.Tensor | None = None,
-    ) -> None:
-        theta = self.initialize() if theta is None else theta.clone()
-        step_min = 1e-6
-        step_max = 1.0
-        best_dt = self.dt
-        best_rate_diff = float("inf")
-        current_rate = 0.0
+        force = jax.grad(lambda x: action(x, beta))
 
-        for attempt in range(max_attempts):
-            acceptance_count = 0
-            for _ in tqdm(range(n_tune_steps), desc=f"Tuning step size ({attempt + 1}/{max_attempts})"):
-                theta, accepted, _ = self.metropolis_step(theta)
-                acceptance_count += int(accepted)
+        def omelyan(theta: Array, pi: Array) -> tuple[Array, Array]:
+            pi = pi - lam * dt * force(theta)
 
-            current_rate = acceptance_count / n_tune_steps
-            rate_diff = abs(current_rate - target_rate)
-            print(f"Step size: {self.dt:.6f}, acceptance rate: {current_rate:.2%}")
-            if rate_diff < best_rate_diff:
-                best_dt = self.dt
-                best_rate_diff = rate_diff
-            if rate_diff <= target_tolerance:
-                break
-            if current_rate > target_rate:
-                step_min = self.dt
-                self.dt = min((self.dt + step_max) / 2, step_max)
-            else:
-                step_max = self.dt
-                self.dt = max((self.dt + step_min) / 2, step_min)
+            def body(i: int, carry: tuple[Array, Array]) -> tuple[Array, Array]:
+                theta_i, pi_i = carry
+                theta_i = theta_i + 0.5 * dt * pi_i
+                pi_i = pi_i - (1 - 2 * lam) * dt * force(theta_i)
+                theta_i = theta_i + 0.5 * dt * pi_i
+                pi_i = jax.lax.cond(i != n_steps - 1, lambda p: p - 2 * lam * dt * force(theta_i), lambda p: p, pi_i)
+                return theta_i, pi_i
 
-        if abs(current_rate - target_rate) > target_tolerance:
-            self.dt = best_dt
+            theta, pi = jax.lax.fori_loop(0, n_steps, body, (theta, pi))
+            return regularize(theta), pi - lam * dt * force(theta)
+
+        def step(theta: Array, key: Array) -> tuple[Array, Array, Array, Array]:
+            key_pi, key_accept, key_next = jax.random.split(key, 3)
+            pi = jax.random.normal(key_pi, theta.shape, dtype=theta.dtype)
+            h_old = energy(theta, pi)
+            theta_new, pi_new = omelyan(theta, pi)
+            h_new = energy(theta_new, pi_new)
+            accept_prob = jnp.minimum(1.0, jnp.exp(-(h_new - h_old)))
+            accepted = jax.random.uniform(key_accept, (), dtype=theta.dtype) < accept_prob
+            return jnp.where(accepted, theta_new, theta), key_next, accepted, jnp.where(accepted, h_new, h_old)
+
+        return jax.jit(step)
+
+    def metropolis_step(self, theta: Array) -> tuple[Array, bool, float]:
+        if self._compiled_step is None:
+            self._compiled_step = self._make_step()
+        theta, self.key, accepted, hamiltonian = self._compiled_step(theta, self.key)
+        return theta, bool(accepted), float(hamiltonian)
+
+    def tune_step_size(self, **_: Any) -> None:
         print(f">>> Using step size: {self.dt:.6f}")
 
-    def thermalize(self, *, n_tune_steps: int = 2000) -> tuple[torch.Tensor, list[float], float]:
+    def thermalize(self, *, n_tune_steps: int = 2000) -> tuple[Array, list[float], float]:
         theta = self.initialize()
         if self.tune_step_size_enabled:
-            print(">>> Initial thermalization for step-size tuning")
-            initial_plaq = []
-            for _ in tqdm(range(self.n_thermalization_steps), desc="Initial thermalization"):
-                theta, _, _ = self.metropolis_step(theta)
-                initial_plaq.append(round(float(plaq_mean_from_field(theta).detach().cpu()), 4))
-            if len(initial_plaq) >= 10:
-                n_complete = (len(initial_plaq) // 10) * 10
-                means = np.mean(np.array(initial_plaq[-n_complete:]).reshape(-1, 10), axis=1)
-                print(f"Initial thermalization plaquette means: {means}")
-            print(">>> Tuning step size")
             self.tune_step_size(n_tune_steps=n_tune_steps, theta=theta)
-        else:
-            print(f">>> Using step size without tuning: {self.dt:.6f}")
-
-        theta = self.initialize()
         plaq_values = []
         acceptance_count = 0
         for _ in tqdm(range(self.n_thermalization_steps), desc="Thermalizing"):
             theta = regularize(theta)
-            plaq_values.append(float(plaq_mean_from_field(theta).detach().cpu()))
+            plaq_values.append(float(plaq_mean_from_field(theta)))
             theta, accepted, _ = self.metropolis_step(theta)
             acceptance_count += int(accepted)
-
-        return theta, plaq_values, acceptance_count / self.n_thermalization_steps
+        denom = max(self.n_thermalization_steps, 1)
+        return theta, plaq_values, acceptance_count / denom
 
     def run(
         self,
         n_iterations: int,
-        theta: torch.Tensor,
+        theta: Array,
         *,
         store_interval: int = 1,
         save_config: bool = True,
-    ) -> tuple[list[torch.Tensor], list[float], float, list[float], list[float]]:
-        configs = []
-        plaq_values = []
-        hamiltonians = []
-        topological_charges = []
+    ) -> tuple[list[Array], list[float], float, list[float], list[float]]:
+        configs: list[Array] = []
+        plaq_values: list[float] = []
+        hamiltonians: list[float] = []
+        topological_charges: list[float] = []
         acceptance_count = 0
-
         for index in tqdm(range(n_iterations), desc="Running HMC"):
             theta, accepted, hamiltonian = self.metropolis_step(theta)
             acceptance_count += int(accepted)
             if index % store_interval == 0:
                 theta = regularize(theta)
                 if save_config:
-                    configs.append(theta.detach().cpu().clone())
-                plaq_values.append(float(plaq_mean_from_field(theta).detach().cpu()))
+                    configs.append(theta)
+                plaq_values.append(float(plaq_mean_from_field(theta)))
                 hamiltonians.append(hamiltonian)
-                topological_charges.append(float(topo_from_field(theta).detach().cpu()))
-
-        return configs, plaq_values, acceptance_count / n_iterations, topological_charges, hamiltonians
+                topological_charges.append(float(topo_from_field(theta)))
+        return configs, plaq_values, acceptance_count / max(n_iterations, 1), topological_charges, hamiltonians

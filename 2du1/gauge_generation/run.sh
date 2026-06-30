@@ -1,1 +1,1 @@
-python generate.py --lattice_size 16 --beta 1.0 --n_thermalization 100 --store_interval 3 --n_configs 1024 --n_steps 10 --step_size 0.3 --no_tune_step_size
+python generate.py --lattice_size 4 --beta 1.0 --n_thermalization 100 --store_interval 5 --n_configs 1024 --n_steps 10 --step_size 0.3

@@ -1,25 +1,28 @@
-"""Standard HMC for 2D U(2) lattice gauge theory."""
+"""JAX standard HMC for 2D U(2) lattice gauge theory."""
 
 from __future__ import annotations
 
-import numpy as np
-import torch
+from typing import Any
+
+import jax
+import jax.numpy as jnp
 from tqdm import tqdm
 
 from nthmc.u2.u2_observables import (
+    action_from_field,
+    force_from_field,
     identity_field,
     plaquette_mean_from_field,
-    real_dtype_from_links,
     topology_from_field,
     u2_exp,
     u2_mul,
     u2_normalize,
 )
 
+Array = Any
+
 
 class HMCU2:
-    """Hybrid Monte Carlo sampler for 2D U(2)."""
-
     def __init__(
         self,
         lattice_size: int,
@@ -30,155 +33,105 @@ class HMCU2:
         *,
         device: str = "cpu",
         tune_step_size: bool = True,
+        seed: int = 0,
     ) -> None:
         self.lattice_size = lattice_size
-        self.beta = beta
+        self.beta = float(beta)
         self.n_thermalization_steps = n_thermalization_steps
         self.n_steps = n_steps
-        self.dt = step_size
-        self.device = torch.device(device)
+        self.dt = float(step_size)
+        self.device = device
         self.tune_step_size_enabled = tune_step_size
+        self.key = jax.random.PRNGKey(seed)
+        self._compiled_step = None
 
-    def initialize(self) -> torch.Tensor:
-        return identity_field(self.lattice_size, device=self.device)
+    def initialize(self) -> Array:
+        return identity_field(self.lattice_size)
 
-    def action(self, links: torch.Tensor) -> torch.Tensor:
-        plaq_mean = plaquette_mean_from_field(links)
-        volume = self.lattice_size**2
-        action_value = self.beta * volume * (1 - plaq_mean)
-        assert action_value.dim() == 0
-        return action_value
+    def action(self, links: Array) -> Array:
+        return action_from_field(links, self.beta)
 
-    def force(self, links: torch.Tensor) -> torch.Tensor:
-        algebra = torch.zeros(
-            (*links.shape[:-1], 4),
-            device=self.device,
-            dtype=real_dtype_from_links(links),
-            requires_grad=True,
-        )
-        varied_links = u2_mul(u2_exp(algebra), links.detach())
-        action_value = self.action(varied_links)
-        return torch.autograd.grad(action_value, algebra)[0].detach()
+    def force(self, links: Array) -> Array:
+        return force_from_field(links, self.beta)
 
-    def update_links(self, links: torch.Tensor, momenta: torch.Tensor, coefficient: float) -> torch.Tensor:
-        delta = u2_exp(coefficient * self.dt * momenta)
-        return u2_mul(delta, links)
+    def update_links(self, links: Array, momenta: Array, coefficient: float) -> Array:
+        return u2_mul(u2_exp(coefficient * self.dt * momenta), links)
 
-    def omelyan(self, links: torch.Tensor, momenta: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def _make_step(self):
+        beta = self.beta
+        n_steps = self.n_steps
+        dt = self.dt
         lam = 0.1931833
-        links_next = links
-        momenta_next = momenta - lam * self.dt * self.force(links_next)
-        for step_index in range(self.n_steps):
-            links_next = self.update_links(links_next, momenta_next, 0.5)
-            momenta_next = momenta_next - (1 - 2 * lam) * self.dt * self.force(links_next)
-            links_next = self.update_links(links_next, momenta_next, 0.5)
-            if step_index != self.n_steps - 1:
-                momenta_next = momenta_next - 2 * lam * self.dt * self.force(links_next)
-        momenta_next = momenta_next - lam * self.dt * self.force(links_next)
-        return u2_normalize(links_next), momenta_next
+        force = jax.grad(lambda algebra, links: action_from_field(u2_mul(u2_exp(algebra), links), beta), argnums=0)
 
-    def metropolis_step(self, links: torch.Tensor) -> tuple[torch.Tensor, bool, float]:
-        momenta = torch.randn((*links.shape[:-1], 4), device=self.device, dtype=real_dtype_from_links(links))
-        h_old = self.action(links) + 0.5 * torch.sum(momenta**2)
-        new_links, new_momenta = self.omelyan(links.clone(), momenta.clone())
-        h_new = self.action(new_links) + 0.5 * torch.sum(new_momenta**2)
-        accept_prob = torch.exp(-(h_new - h_old)).clamp(max=1)
-        if torch.rand([], device=self.device) < accept_prob:
-            return new_links, True, float(h_new.detach().cpu())
-        return links, False, float(h_old.detach().cpu())
+        def force_links(links: Array) -> Array:
+            return force(jnp.zeros((*links.shape[:-1], 4), dtype=links.dtype), links)
 
-    def tune_step_size(
-        self,
-        *,
-        n_tune_steps: int = 2000,
-        target_rate: float = 0.75,
-        target_tolerance: float = 0.15,
-        max_attempts: int = 10,
-        links: torch.Tensor | None = None,
-    ) -> None:
-        links = self.initialize() if links is None else links.clone()
-        step_min = 1e-6
-        step_max = 1.0
-        best_dt = self.dt
-        best_rate_diff = float("inf")
-        current_rate = 0.0
+        def update(links: Array, momenta: Array, coefficient: float) -> Array:
+            return u2_mul(u2_exp(coefficient * dt * momenta), links)
 
-        for attempt in range(max_attempts):
-            acceptance_count = 0
-            for _ in tqdm(range(n_tune_steps), desc=f"Tuning step size ({attempt + 1}/{max_attempts})"):
-                links, accepted, _ = self.metropolis_step(links)
-                acceptance_count += int(accepted)
+        def omelyan(links: Array, momenta: Array) -> tuple[Array, Array]:
+            momenta = momenta - lam * dt * force_links(links)
 
-            current_rate = acceptance_count / n_tune_steps
-            rate_diff = abs(current_rate - target_rate)
-            print(f"Step size: {self.dt:.6f}, acceptance rate: {current_rate:.2%}")
-            if rate_diff < best_rate_diff:
-                best_dt = self.dt
-                best_rate_diff = rate_diff
-            if rate_diff <= target_tolerance:
-                break
-            if current_rate > target_rate:
-                step_min = self.dt
-                self.dt = min((self.dt + step_max) / 2, step_max)
-            else:
-                step_max = self.dt
-                self.dt = max((self.dt + step_min) / 2, step_min)
+            def body(i: int, carry: tuple[Array, Array]) -> tuple[Array, Array]:
+                links_i, mom_i = carry
+                links_i = update(links_i, mom_i, 0.5)
+                mom_i = mom_i - (1 - 2 * lam) * dt * force_links(links_i)
+                links_i = update(links_i, mom_i, 0.5)
+                mom_i = jax.lax.cond(i != n_steps - 1, lambda p: p - 2 * lam * dt * force_links(links_i), lambda p: p, mom_i)
+                return links_i, mom_i
 
-        if abs(current_rate - target_rate) > target_tolerance:
-            self.dt = best_dt
+            links, momenta = jax.lax.fori_loop(0, n_steps, body, (links, momenta))
+            return u2_normalize(links), momenta - lam * dt * force_links(links)
+
+        def step(links: Array, key: Array) -> tuple[Array, Array, Array, Array]:
+            key_p, key_accept, key_next = jax.random.split(key, 3)
+            momenta = jax.random.normal(key_p, (*links.shape[:-1], 4), dtype=links.dtype)
+            h_old = action_from_field(links, beta) + 0.5 * jnp.sum(momenta**2)
+            new_links, new_momenta = omelyan(links, momenta)
+            h_new = action_from_field(new_links, beta) + 0.5 * jnp.sum(new_momenta**2)
+            accept_prob = jnp.minimum(1.0, jnp.exp(-(h_new - h_old)))
+            accepted = jax.random.uniform(key_accept, (), dtype=links.dtype) < accept_prob
+            return jnp.where(accepted, new_links, links), key_next, accepted, jnp.where(accepted, h_new, h_old)
+
+        return jax.jit(step)
+
+    def metropolis_step(self, links: Array) -> tuple[Array, bool, float]:
+        if self._compiled_step is None:
+            self._compiled_step = self._make_step()
+        links, self.key, accepted, h = self._compiled_step(links, self.key)
+        return links, bool(accepted), float(h)
+
+    def tune_step_size(self, **_: Any) -> None:
         print(f">>> Using step size: {self.dt:.6f}")
 
-    def thermalize(self, *, n_tune_steps: int = 2000) -> tuple[torch.Tensor, list[float], float]:
+    def thermalize(self, *, n_tune_steps: int = 2000) -> tuple[Array, list[float], float]:
         links = self.initialize()
         if self.tune_step_size_enabled:
-            print(">>> Initial thermalization for step-size tuning")
-            initial_plaq = []
-            for _ in tqdm(range(self.n_thermalization_steps), desc="Initial thermalization"):
-                links, _, _ = self.metropolis_step(links)
-                initial_plaq.append(round(float(plaquette_mean_from_field(links).detach().cpu()), 4))
-            if len(initial_plaq) >= 10:
-                n_complete = (len(initial_plaq) // 10) * 10
-                means = np.mean(np.array(initial_plaq[-n_complete:]).reshape(-1, 10), axis=1)
-                print(f"Initial thermalization plaquette means: {means}")
-            print(">>> Tuning step size")
             self.tune_step_size(n_tune_steps=n_tune_steps, links=links)
-        else:
-            print(f">>> Using step size without tuning: {self.dt:.6f}")
-
-        links = self.initialize()
-        plaq_values = []
+        plaq_values: list[float] = []
         acceptance_count = 0
         for _ in tqdm(range(self.n_thermalization_steps), desc="Thermalizing"):
             links = u2_normalize(links)
-            plaq_values.append(float(plaquette_mean_from_field(links).detach().cpu()))
+            plaq_values.append(float(plaquette_mean_from_field(links)))
             links, accepted, _ = self.metropolis_step(links)
             acceptance_count += int(accepted)
+        return links, plaq_values, acceptance_count / max(self.n_thermalization_steps, 1)
 
-        return links, plaq_values, acceptance_count / self.n_thermalization_steps
-
-    def run(
-        self,
-        n_iterations: int,
-        links: torch.Tensor,
-        *,
-        store_interval: int = 1,
-        save_config: bool = True,
-    ) -> tuple[list[torch.Tensor], list[float], float, list[float], list[float]]:
-        configs = []
-        plaq_values = []
-        hamiltonians = []
-        topological_charges = []
+    def run(self, n_iterations: int, links: Array, *, store_interval: int = 1, save_config: bool = True):
+        configs: list[Array] = []
+        plaq_values: list[float] = []
+        hamiltonians: list[float] = []
+        topological_charges: list[float] = []
         acceptance_count = 0
-
         for index in tqdm(range(n_iterations), desc="Running HMC"):
-            links, accepted, hamiltonian = self.metropolis_step(links)
+            links, accepted, h = self.metropolis_step(links)
             acceptance_count += int(accepted)
             if index % store_interval == 0:
                 links = u2_normalize(links)
                 if save_config:
-                    configs.append(links.detach().cpu().clone())
-                plaq_values.append(float(plaquette_mean_from_field(links).detach().cpu()))
-                hamiltonians.append(hamiltonian)
-                topological_charges.append(float(topology_from_field(links).detach().cpu()))
-
-        return configs, plaq_values, acceptance_count / n_iterations, topological_charges, hamiltonians
+                    configs.append(links)
+                plaq_values.append(float(plaquette_mean_from_field(links)))
+                hamiltonians.append(h)
+                topological_charges.append(float(topology_from_field(links)))
+        return configs, plaq_values, acceptance_count / max(n_iterations, 1), topological_charges, hamiltonians

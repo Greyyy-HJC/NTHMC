@@ -1,32 +1,40 @@
-"""Optimized neural field transformation for 2D U(1)."""
+"""Pure JAX neural field transformation for 2D U(1)."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 
+import jax
+import jax.numpy as jnp
 import matplotlib
-
-matplotlib.use("Agg")
-
-import matplotlib.pyplot as plt
 import numpy as np
-import torch
-import torch.nn as nn
+import optax
 from tqdm import tqdm
 
-from nthmc.u1.models import choose_model
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+from nthmc.core.checkpoint import load_checkpoint, save_checkpoint
+from nthmc.u1.models import apply_model, init_transform_params
 from nthmc.u1.u1_observables import (
+    action,
     format_beta,
     get_field_mask,
     get_plaq_mask,
     get_rect_mask,
     plaq_from_field_batch,
     rect_from_field_batch,
+    regularize,
 )
+
+Array = Any
+Params = dict[str, Any]
 
 
 class FieldTransformation:
-    """Optimized field transformation with optional torch.compile."""
+    """JAX U(1) field transformation with Optax training and npz checkpoints."""
 
     def __init__(
         self,
@@ -43,12 +51,10 @@ class FieldTransformation:
         plot_dir: str | Path = "plots",
         dump_dir: str | Path = "dumps",
         hyperparams: dict[str, float] | None = None,
-        fabric=None,
-        backend: str = "eager",
-        compile_enabled: bool = False,
+        **_: Any,
     ) -> None:
         self.lattice_size = lattice_size
-        self.device = torch.device(device)
+        self.device = device
         self.n_subsets = n_subsets
         self.if_check_jac = if_check_jac
         self.num_workers = num_workers
@@ -58,542 +64,323 @@ class FieldTransformation:
         self.plot_dir = Path(plot_dir)
         self.dump_dir = Path(dump_dir)
         self.train_beta: float | None = None
-        self.fabric = fabric
-        self.print = fabric.print if fabric is not None else print
-        self.backward = fabric.backward if fabric is not None else torch.autograd.backward
-        self.backend = backend
-        self.compile_enabled = compile_enabled
-
-        self.hyperparams = {
-            "init_std": 0.001,
+        self.hyperparams: dict[str, float] = {
+            "init_std": 0.001 if identity_init else 0.02,
             "lr": 0.001,
             "weight_decay": 0.0001,
             "factor": 0.5,
             "patience": 5,
+            "early_stop_patience": 20,
             "max_grad_norm": 10.0,
+            "inverse_iters": 24,
         }
         if hyperparams:
             self.hyperparams.update(hyperparams)
+        key = jax.random.PRNGKey(0)
+        self.params = init_transform_params(
+            key,
+            model_tag,
+            n_subsets,
+            init_std=float(self.hyperparams["init_std"]),
+        )
+        self.optimizer = self._make_optimizer(float(self.hyperparams["lr"]))
+        self.opt_state = self.optimizer.init(self.params)
 
-        # Models return eight plaquette coefficients and sixteen rectangle
-        # coefficients: sin channels followed by cos channels.
-        model_cls = choose_model(model_tag)
-        raw_models = nn.ModuleList([model_cls().to(self.device) for _ in range(n_subsets)])
-
-        if identity_init:
-            for model in raw_models:
-                for param in model.parameters():
-                    nn.init.normal_(param, mean=0.0, std=self.hyperparams["init_std"])
-
-        raw_optimizers = [
-            torch.optim.AdamW(
-                model.parameters(),
-                lr=self.hyperparams["lr"],
-                weight_decay=self.hyperparams["weight_decay"],
-            )
-            for model in raw_models
-        ]
-        self.models = []
-        self.optimizers = []
-        for model, optimizer in zip(raw_models, raw_optimizers):
-            if self.fabric is not None:
-                model, optimizer = self.fabric.setup(model, optimizer)
-            self.models.append(model)
-            self.optimizers.append(optimizer)
-        self.schedulers = [
-            torch.optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer,
-                mode="min",
-                factor=self.hyperparams["factor"],
-                patience=int(self.hyperparams["patience"]),
-            )
-            for optimizer in self.optimizers
-        ]
-
-        self._init_compiled_functions()
-
-    def _clip_gradients(self) -> None:
+    def _make_optimizer(self, lr: float) -> optax.GradientTransformation:
+        chain = []
         max_norm = float(self.hyperparams.get("max_grad_norm", 0.0))
-        if max_norm <= 0:
-            return
-        params: list[torch.nn.Parameter] = []
-        for model in self.models:
-            params.extend(p for p in model.parameters() if p.requires_grad)
-        if not params:
-            return
-        torch.nn.utils.clip_grad_norm_(params, max_norm)
+        if max_norm > 0:
+            chain.append(optax.clip_by_global_norm(max_norm))
+        chain.append(optax.adamw(lr, weight_decay=float(self.hyperparams.get("weight_decay", 0.0))))
+        return optax.chain(*chain)
 
-    def _init_compiled_functions(self) -> None:
-        """Prepare compiled callables and fall back to regular methods if unavailable."""
-        self.ft_phase_compiled = self.ft_phase
-        self.forward_compiled = self.forward
-        self.inverse_compiled = self.inverse
-        self.compute_jac_logdet_compiled = self.compute_jac_logdet
-        self.compute_action_compiled = self.compute_action
+    def _checkpoint_template(self) -> Params:
+        return init_transform_params(
+            jax.random.PRNGKey(0),
+            self.model_tag,
+            self.n_subsets,
+            init_std=float(self.hyperparams["init_std"]),
+        )
 
-        if not self.compile_enabled:
-            self.print("torch.compile disabled; using standard functions")
-            return
-        if not hasattr(torch, "compile"):
-            self.print("torch.compile not available; using standard functions")
-            return
+    def checkpoint_path(self, train_beta: float) -> Path:
+        return self.model_dir / f"best_model_train_beta{format_beta(train_beta)}_{self.save_tag}.npz"
 
-        compile_options = {"backend": self.backend, "fullgraph": False, "dynamic": True}
-        try:
-            self.ft_phase_compiled = torch.compile(self.ft_phase, **compile_options)
-            self.forward_compiled = torch.compile(self._forward_using_compiled_phase, **compile_options)
-            self.inverse_compiled = torch.compile(self._inverse_using_compiled_phase, **compile_options)
-            self.compute_jac_logdet_compiled = torch.compile(self.compute_jac_logdet, **compile_options)
-            self.compute_action_compiled = torch.compile(self.compute_action, **compile_options)
-            self.print(f"Initialized torch.compile wrappers with backend={self.backend!r}")
-        except Exception as exc:
-            self.print(f"Warning: torch.compile initialization failed: {exc}")
-            self.print("Falling back to standard functions")
+    def save_best_model(self, train_beta: float, epoch: int, loss: float) -> None:
+        metadata = {
+            "system": "2du1",
+            "model_tag": self.model_tag,
+            "n_subsets": self.n_subsets,
+            "lattice_size": self.lattice_size,
+            "train_beta": float(train_beta),
+            "epoch": int(epoch),
+            "loss": float(loss),
+            "hyperparams": self.hyperparams,
+        }
+        save_checkpoint(self.checkpoint_path(train_beta), params=self.params, opt_state=self.opt_state, metadata=metadata)
+
+    def load_best_model(self, train_beta: float) -> None:
+        params, metadata = load_checkpoint(self.checkpoint_path(train_beta), self._checkpoint_template())
+        if metadata.get("model_tag") != self.model_tag:
+            raise ValueError(f"Checkpoint model_tag={metadata.get('model_tag')!r} does not match {self.model_tag!r}")
+        self.params = params
+        self.opt_state = self.optimizer.init(self.params)
+        print(f"Loaded JAX checkpoint from epoch {metadata.get('epoch')} with loss {metadata.get('loss')}")
 
     def freeze_models_for_eval(self) -> None:
-        """Freeze model parameters before evaluation-only compiled execution."""
-        for model in self.models:
-            model.eval()
-            for param in model.parameters():
-                param.requires_grad_(False)
+        return None
 
-    def enable_eval_compile(self, *, backend: str = "inductor") -> None:
-        """Enable torch.compile after models are loaded and frozen for evaluation."""
-        if self.if_check_jac:
-            raise RuntimeError("Evaluation compile is not supported with if_check_jac=True")
-        self.backend = backend
-        self.compile_enabled = True
-        self._init_compiled_functions()
+    def enable_eval_compile(self, *, backend: str = "jax") -> None:
+        return None
 
-    def compute_k0_k1(
-        self,
-        theta: torch.Tensor,
-        index: int,
-        plaq: torch.Tensor,
-        rect: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Return plaquette and rectangle coefficients for one active link subset."""
-        batch_size = theta.shape[0]
-        plaq_mask = get_plaq_mask(index, batch_size, self.lattice_size, self.device)
-        rect_mask = get_rect_mask(index, batch_size, self.lattice_size, self.device)
+    @staticmethod
+    def _plaq_angle_stack(plaq: Array) -> Array:
+        return jnp.stack([plaq, jnp.roll(plaq, 1, 2), plaq, jnp.roll(plaq, 1, 1)], axis=1)
 
-        plaq_masked = plaq * plaq_mask
-        rect_masked = rect * rect_mask
-        plaq_features = torch.stack([torch.sin(plaq_masked), torch.cos(plaq_masked)], dim=1)
-        rect_features = torch.cat([torch.sin(rect_masked), torch.cos(rect_masked)], dim=1)
-
-        output = self.models[index](plaq_features, rect_features)
-        if not isinstance(output, tuple):
-            raise ValueError("field_transform expects models to return (plaq_coeffs, rect_coeffs)")
-        k0, k1 = output
-        if k0.shape[1] != 8 or k1.shape[1] != 16:
-            raise ValueError("field_transform expects 8 plaquette and 16 rectangle coefficient channels")
-        return k0, k1
-
-    def _plaq_angle_stack(self, plaq: torch.Tensor) -> torch.Tensor:
-        """Stack the four plaquette angles touching each active link."""
-        return torch.stack(
-            [
-                plaq,
-                torch.roll(plaq, shifts=1, dims=2),
-                plaq,
-                torch.roll(plaq, shifts=1, dims=1),
-            ],
-            dim=1,
-        )
-
-    def _rect_angle_stack(self, rect: torch.Tensor) -> torch.Tensor:
-        """Stack the eight rectangle angles touching each active link."""
+    @staticmethod
+    def _rect_angle_stack(rect: Array) -> Array:
         rect0 = rect[:, 0]
         rect1 = rect[:, 1]
-        return torch.stack(
+        return jnp.stack(
             [
-                torch.roll(rect0, shifts=1, dims=1),
-                torch.roll(rect0, shifts=(1, 1), dims=(1, 2)),
+                jnp.roll(rect0, 1, 1),
+                jnp.roll(rect0, (1, 1), (1, 2)),
                 rect0,
-                torch.roll(rect0, shifts=1, dims=2),
-                torch.roll(rect1, shifts=1, dims=2),
-                torch.roll(rect1, shifts=(1, 1), dims=(1, 2)),
+                jnp.roll(rect0, 1, 2),
+                jnp.roll(rect1, 1, 2),
+                jnp.roll(rect1, (1, 1), (1, 2)),
                 rect1,
-                torch.roll(rect1, shifts=1, dims=1),
+                jnp.roll(rect1, 1, 1),
             ],
-            dim=1,
+            axis=1,
         )
 
-    def _plaq_phase_shift(self, k0: torch.Tensor, plaq_angles: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
-        sin_plaq_signs = torch.tensor([-1, 1, 1, -1], device=self.device, dtype=theta.dtype)
-        cos_plaq_signs = -sin_plaq_signs
-        plaq_stack = torch.cat(
-            [
-                torch.sin(plaq_angles) * sin_plaq_signs.view(1, 4, 1, 1),
-                torch.cos(plaq_angles) * cos_plaq_signs.view(1, 4, 1, 1),
-            ],
-            dim=1,
-        )
-        temp = k0 * plaq_stack
-        return torch.stack(
-            [
-                temp[:, 0] + temp[:, 1] + temp[:, 4] + temp[:, 5],
-                temp[:, 2] + temp[:, 3] + temp[:, 6] + temp[:, 7],
-            ],
-            dim=1,
-        )
+    def _compute_k0_k1(self, params: Params, theta: Array, index: int, plaq: Array, rect: Array) -> tuple[Array, Array]:
+        batch_size = theta.shape[0]
+        plaq_mask = get_plaq_mask(index, batch_size, self.lattice_size)
+        rect_mask = get_rect_mask(index, batch_size, self.lattice_size)
+        plaq_features = jnp.stack([jnp.sin(plaq * plaq_mask), jnp.cos(plaq * plaq_mask)], axis=1)
+        rect_masked = rect * rect_mask
+        rect_features = jnp.concatenate([jnp.sin(rect_masked), jnp.cos(rect_masked)], axis=1)
+        return apply_model(params["subsets"][index], self.model_tag, plaq_features, rect_features)
 
-    def _plaq_jac_shift(self, k0: torch.Tensor, plaq_angles: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
-        temp = k0 * torch.cat([-torch.cos(plaq_angles), -torch.sin(plaq_angles)], dim=1)
-        return torch.stack(
-            [
-                temp[:, 0] + temp[:, 1] + temp[:, 4] + temp[:, 5],
-                temp[:, 2] + temp[:, 3] + temp[:, 6] + temp[:, 7],
-            ],
-            dim=1,
+    @staticmethod
+    def _plaq_phase_shift(k0: Array, plaq_angles: Array, theta: Array) -> Array:
+        sin_signs = jnp.asarray([-1, 1, 1, -1], dtype=theta.dtype)
+        cos_signs = -sin_signs
+        stack = jnp.concatenate(
+            [jnp.sin(plaq_angles) * sin_signs.reshape(1, 4, 1, 1), jnp.cos(plaq_angles) * cos_signs.reshape(1, 4, 1, 1)],
+            axis=1,
         )
+        temp = k0 * stack
+        return jnp.stack([temp[:, 0] + temp[:, 1] + temp[:, 4] + temp[:, 5], temp[:, 2] + temp[:, 3] + temp[:, 6] + temp[:, 7]], axis=1)
 
-    def _rect_phase_shift(self, k1: torch.Tensor, rect_angles: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
-        signs = torch.tensor([-1, 1, -1, 1, 1, -1, 1, -1], device=self.device, dtype=theta.dtype)
-        rect_stack = torch.cat(
-            [
-                torch.sin(rect_angles) * signs.view(1, 8, 1, 1),
-                torch.cos(rect_angles) * (-signs).view(1, 8, 1, 1),
-            ],
-            dim=1,
-        )
-        temp = k1 * rect_stack
-        return torch.stack(
-            [
-                temp[:, 0:4].sum(dim=1) + temp[:, 8:12].sum(dim=1),
-                temp[:, 4:8].sum(dim=1) + temp[:, 12:16].sum(dim=1),
-            ],
-            dim=1,
-        )
+    @staticmethod
+    def _plaq_jac_shift(k0: Array, plaq_angles: Array) -> Array:
+        temp = k0 * jnp.concatenate([-jnp.cos(plaq_angles), -jnp.sin(plaq_angles)], axis=1)
+        return jnp.stack([temp[:, 0] + temp[:, 1] + temp[:, 4] + temp[:, 5], temp[:, 2] + temp[:, 3] + temp[:, 6] + temp[:, 7]], axis=1)
 
-    def _rect_jac_shift(self, k1: torch.Tensor, rect_angles: torch.Tensor) -> torch.Tensor:
-        temp = k1 * torch.cat([-torch.cos(rect_angles), -torch.sin(rect_angles)], dim=1)
-        return torch.stack(
-            [
-                temp[:, 0:4].sum(dim=1) + temp[:, 8:12].sum(dim=1),
-                temp[:, 4:8].sum(dim=1) + temp[:, 12:16].sum(dim=1),
-            ],
-            dim=1,
+    @staticmethod
+    def _rect_phase_shift(k1: Array, rect_angles: Array, theta: Array) -> Array:
+        signs = jnp.asarray([-1, 1, -1, 1, 1, -1, 1, -1], dtype=theta.dtype)
+        stack = jnp.concatenate(
+            [jnp.sin(rect_angles) * signs.reshape(1, 8, 1, 1), jnp.cos(rect_angles) * (-signs).reshape(1, 8, 1, 1)],
+            axis=1,
         )
+        temp = k1 * stack
+        return jnp.stack([temp[:, 0:4].sum(1) + temp[:, 8:12].sum(1), temp[:, 4:8].sum(1) + temp[:, 12:16].sum(1)], axis=1)
 
-    def ft_phase(self, theta: torch.Tensor, index: int) -> torch.Tensor:
+    @staticmethod
+    def _rect_jac_shift(k1: Array, rect_angles: Array) -> Array:
+        temp = k1 * jnp.concatenate([-jnp.cos(rect_angles), -jnp.sin(rect_angles)], axis=1)
+        return jnp.stack([temp[:, 0:4].sum(1) + temp[:, 8:12].sum(1), temp[:, 4:8].sum(1) + temp[:, 12:16].sum(1)], axis=1)
+
+    def ft_phase_with_params(self, params: Params, theta: Array, index: int) -> Array:
         batch_size = theta.shape[0]
         plaq = plaq_from_field_batch(theta)
         rect = rect_from_field_batch(theta)
+        k0, k1 = self._compute_k0_k1(params, theta, index, plaq, rect)
+        shift = self._plaq_phase_shift(k0, self._plaq_angle_stack(plaq), theta) + self._rect_phase_shift(k1, self._rect_angle_stack(rect), theta)
+        return shift * get_field_mask(index, batch_size, self.lattice_size)
 
-        plaq_angles = self._plaq_angle_stack(plaq)
-        rect_angles = self._rect_angle_stack(rect)
-        k0, k1 = self.compute_k0_k1(theta, index, plaq, rect)
-        ft_phase_plaq = self._plaq_phase_shift(k0, plaq_angles, theta)
-        ft_phase_rect = self._rect_phase_shift(k1, rect_angles, theta)
-
-        field_mask = get_field_mask(index, batch_size, self.lattice_size, self.device)
-        return (ft_phase_plaq + ft_phase_rect) * field_mask
-
-    def _forward_using_compiled_phase(self, theta: torch.Tensor) -> torch.Tensor:
-        theta_curr = theta.clone()
+    def forward_with_params(self, params: Params, theta: Array) -> Array:
+        theta_curr = theta
         for index in range(self.n_subsets):
-            theta_curr = theta_curr + self.ft_phase_compiled(theta_curr, index)
+            theta_curr = theta_curr + self.ft_phase_with_params(params, theta_curr, index)
         return theta_curr
 
-    def forward(self, theta: torch.Tensor) -> torch.Tensor:
-        theta_curr = theta.clone()
-        for index in range(self.n_subsets):
-            theta_curr = theta_curr + self.ft_phase(theta_curr, index)
-        return theta_curr
+    def forward(self, theta: Array) -> Array:
+        return self.forward_with_params(self.params, theta)
 
-    def field_transformation(self, theta: torch.Tensor) -> torch.Tensor:
-        return self.forward(theta.unsqueeze(0)).squeeze(0)
+    def field_transformation(self, theta: Array) -> Array:
+        return self.forward(jnp.asarray(theta)[jnp.newaxis, ...])[0]
 
-    def field_transformation_compiled(self, theta: torch.Tensor) -> torch.Tensor:
-        return self.forward_compiled(theta.unsqueeze(0)).squeeze(0)
+    def field_transformation_compiled(self, theta: Array) -> Array:
+        return self.field_transformation(theta)
 
-    def _inverse_using_compiled_phase(
-        self,
-        theta: torch.Tensor,
-        *,
-        max_iter: int = 200,
-        tol: float = 1e-6,
-    ) -> torch.Tensor:
-        return self.inverse(theta, max_iter=max_iter, tol=tol)
-
-    def inverse(
-        self,
-        theta: torch.Tensor,
-        *,
-        max_iter: int = 200,
-        tol: float = 1e-6,
-        return_diagnostics: bool = False,
-    ) -> torch.Tensor | tuple[torch.Tensor, dict[str, float | int]]:
-        theta_curr = theta.clone()
-        subset_final_diffs: list[float] = []
-        n_not_converged = 0
+    def inverse_with_params(self, params: Params, theta: Array, *, max_iter: int | None = None) -> Array:
+        max_iter = int(max_iter or self.hyperparams.get("inverse_iters", 24))
+        theta_curr = theta
         for index in reversed(range(self.n_subsets)):
-            theta_iter = theta_curr.clone()
-            diff = torch.tensor(float("inf"), device=self.device)
+            theta_iter = theta_curr
             for _ in range(max_iter):
-                theta_next = theta_curr - self.ft_phase(theta_iter, index)
-                denominator = torch.clamp(torch.norm(theta_iter), min=1e-12)
-                diff = torch.norm(theta_next - theta_iter) / denominator
-                theta_iter = theta_next
-                if diff < tol:
-                    break
-            final_diff = float(diff.detach().cpu())
-            subset_final_diffs.append(final_diff)
-            if diff >= tol:
-                n_not_converged += 1
-                self.print(f"Warning: inverse iteration for subset {index} did not converge, diff={diff:.2e}")
+                theta_iter = theta_curr - self.ft_phase_with_params(params, theta_iter, index)
             theta_curr = theta_iter
-        if return_diagnostics:
-            diag: dict[str, float | int] = {
-                "max_final_diff": max(subset_final_diffs) if subset_final_diffs else 0.0,
-                "mean_final_diff": float(sum(subset_final_diffs) / len(subset_final_diffs))
-                if subset_final_diffs
-                else 0.0,
-                "n_not_converged": n_not_converged,
-            }
-            return theta_curr, diag
         return theta_curr
+    
+    def inverse_with_diagnostics(
+        self,
+        params: Params,
+        theta: Array,
+        *,
+        max_iter: int | None = None,
+    ) -> tuple[Array, dict[str, Array]]:
+        max_iter = int(max_iter or self.hyperparams.get("inverse_iters", 24))
+        theta_curr = theta
+        final_diffs = []
 
-    def inverse_field_transformation(self, theta: torch.Tensor) -> torch.Tensor:
-        return self.inverse(theta.unsqueeze(0)).squeeze(0)
+        for index in reversed(range(self.n_subsets)):
+            theta_iter = theta_curr
+            diff = jnp.asarray(jnp.inf, dtype=theta.dtype)
 
-    def inverse_field_transformation_compiled(self, theta: torch.Tensor) -> torch.Tensor:
-        return self.inverse_compiled(theta.unsqueeze(0)).squeeze(0)
+            for _ in range(max_iter):
+                theta_next = theta_curr - self.ft_phase_with_params(params, theta_iter, index)
+                denom = jnp.clip(jnp.linalg.norm(theta_iter), min=1e-12)
+                diff = jnp.linalg.norm(theta_next - theta_iter) / denom
+                theta_iter = theta_next
 
-    def compute_jac_logdet(self, theta: torch.Tensor) -> torch.Tensor:
+            final_diffs.append(diff)
+            theta_curr = theta_iter
+
+        final_diffs = jnp.stack(final_diffs)
+        recon = self.forward_with_params(params, theta_curr)
+        round_trip_err = jnp.mean(jnp.abs(recon - theta))
+
+        diagnostics = {
+            "max_final_diff": jnp.max(final_diffs),
+            "mean_final_diff": jnp.mean(final_diffs),
+            "round_trip_mean_abs_err": round_trip_err,
+        }
+        return theta_curr, diagnostics
+
+    def inverse(self, theta: Array, **_: Any) -> Array:
+        return self.inverse_with_params(self.params, jnp.asarray(theta))
+
+    def inverse_field_transformation(self, theta: Array) -> Array:
+        return self.inverse(jnp.asarray(theta)[jnp.newaxis, ...])[0]
+
+    def compute_jac_logdet_with_params(self, params: Params, theta: Array) -> Array:
         batch_size = theta.shape[0]
-        log_det = torch.zeros(batch_size, device=self.device)
-        theta_curr = theta.clone()
-
+        log_det = jnp.zeros(batch_size, dtype=theta.dtype)
+        theta_curr = theta
         for index in range(self.n_subsets):
-            field_mask = get_field_mask(index, batch_size, self.lattice_size, self.device)
+            field_mask = get_field_mask(index, batch_size, self.lattice_size)
             plaq = plaq_from_field_batch(theta_curr)
             rect = rect_from_field_batch(theta_curr)
-
-            plaq_angles = self._plaq_angle_stack(plaq)
-            rect_angles = self._rect_angle_stack(rect)
-            k0, k1 = self.compute_k0_k1(theta_curr, index, plaq, rect)
-            plaq_jac_shift = self._plaq_jac_shift(k0, plaq_angles, theta_curr) * field_mask
-            rect_jac_shift = self._rect_jac_shift(k1, rect_angles) * field_mask
-
-            log_det = log_det + torch.log(1 + plaq_jac_shift + rect_jac_shift).sum(dim=(1, 2, 3))
-            theta_curr = theta_curr + self.ft_phase(theta_curr, index)
-
+            k0, k1 = self._compute_k0_k1(params, theta_curr, index, plaq, rect)
+            plaq_jac = self._plaq_jac_shift(k0, self._plaq_angle_stack(plaq)) * field_mask
+            rect_jac = self._rect_jac_shift(k1, self._rect_angle_stack(rect)) * field_mask
+            log_det = log_det + jnp.log(jnp.clip(1 + plaq_jac + rect_jac, min=1e-8)).sum(axis=(1, 2, 3))
+            theta_curr = theta_curr + self.ft_phase_with_params(params, theta_curr, index)
         return log_det
 
-    def compute_jac_logdet_autograd(self, theta: torch.Tensor) -> torch.Tensor:
-        """Compute the full Jacobian log determinant for the first batch item."""
-        theta_single = theta[0].unsqueeze(0)
-        jacobian = torch.autograd.functional.jacobian(
-            self.forward_compiled,
-            theta_single,
-            create_graph=True,
-        )
-        jacobian_2d = jacobian.reshape(theta_single.shape[0], theta_single.numel(), theta_single.numel())
-        _, logabsdet = torch.linalg.slogdet(jacobian_2d)
-        return logabsdet
+    def compute_jac_logdet(self, theta: Array) -> Array:
+        return self.compute_jac_logdet_with_params(self.params, jnp.asarray(theta))
 
-    def compute_action(self, theta: torch.Tensor, beta: float) -> torch.Tensor:
-        plaq = plaq_from_field_batch(theta)
-        return -beta * torch.sum(torch.cos(plaq), dim=(1, 2))
+    def compute_jac_logdet_compiled(self, theta: Array) -> Array:
+        return self.compute_jac_logdet(theta)
 
-    def compute_force(self, theta: torch.Tensor, beta: float, *, transformed: bool = False) -> torch.Tensor:
-        if not theta.requires_grad:
-            theta = theta.clone().requires_grad_(True)
+    def new_action_with_params(self, params: Params, theta_new: Array, beta: float) -> Array:
+        theta_ori = self.forward_with_params(params, theta_new[jnp.newaxis, ...])[0]
+        return action(theta_ori, beta) - self.compute_jac_logdet_with_params(params, theta_new[jnp.newaxis, ...])[0]
 
+    def compute_force(self, theta: Array, beta: float, *, transformed: bool = False) -> Array:
         if transformed:
-            theta_ori = self.forward_compiled(theta)
-            action = self.compute_action_compiled(theta_ori, beta)
-            jac_logdet = self.compute_jac_logdet_compiled(theta)
-            if self.if_check_jac:
-                jac_logdet_autograd = self.compute_jac_logdet_autograd(theta)
-                abs_diff = torch.abs(jac_logdet_autograd[0] - jac_logdet[0])
-                denominator = torch.clamp(torch.abs(jac_logdet[0]), min=1e-12)
-                relative_diff = abs_diff / denominator
-                is_close = torch.isclose(jac_logdet_autograd[0], jac_logdet[0], rtol=1e-4, atol=1e-6)
-                if not is_close.item():
-                    self.print(
-                        "\nWarning: Jacobian log determinant difference "
-                        f"abs={abs_diff.item():.2e}, rel={relative_diff.item():.2e}"
-                    )
-                    self.print(">>> Jacobian is not correct!")
-                else:
-                    self.print(
-                        "\nJacobian log det "
-                        f"(manual): {jac_logdet[0].item():.2e}, "
-                        f"(autograd): {jac_logdet_autograd[0].item():.2e}"
-                    )
-                    self.print(">>> Jacobian is all good!")
-            total_action = action - jac_logdet
-        else:
-            total_action = self.compute_action_compiled(theta, beta)
+            return jax.vmap(jax.grad(lambda x: self.new_action_with_params(self.params, x, beta)))(jnp.asarray(theta))
+        return jax.vmap(jax.grad(lambda x: action(x, beta)))(jnp.asarray(theta))
 
-        return torch.autograd.grad(total_action.sum(), theta, create_graph=True)[0]
-
-    def loss_fn(self, theta_ori: torch.Tensor) -> torch.Tensor:
-        if self.train_beta is None:
-            raise RuntimeError("train_beta is not set")
-        theta_new = self.inverse(theta_ori)
-        force_new = self.compute_force(theta_new, self.train_beta, transformed=True)
+    def loss_fn_with_params(self, params: Params, theta_ori: Array, beta: float) -> Array:
+        theta_new = self.inverse_with_params(params, theta_ori)
+        force_new = jax.vmap(jax.grad(lambda x: self.new_action_with_params(params, x, beta)))(theta_new)
         volume = self.lattice_size * self.lattice_size
         force_flat = force_new.reshape(force_new.shape[0], -1)
-        loss_per_config = (
-            torch.linalg.vector_norm(force_flat, ord=2, dim=1) / (volume**0.5)
-            + torch.linalg.vector_norm(force_flat, ord=4, dim=1) / (volume**0.25)
-            + torch.linalg.vector_norm(force_flat, ord=6, dim=1) / (volume ** (1 / 6))
-            + torch.linalg.vector_norm(force_flat, ord=8, dim=1) / (volume ** (1 / 8))
-        )
-        return loss_per_config.mean()
-
-    def _maybe_log_inverse_diagnostics(
-        self,
-        test_data: torch.Tensor,
-        batch_size: int,
-        epoch_display: int,
-        n_epochs: int,
-    ) -> None:
-        if self.fabric is not None and self.fabric.global_rank != 0:
-            return
-        n = min(8, int(test_data.shape[0]), int(batch_size))
-        if n <= 0:
-            return
-        probe = test_data[:n].to(self.device)
-        with torch.no_grad():
-            inv, diag = self.inverse(probe, return_diagnostics=True)
-            recon = self.forward(inv)
-            rt_err = (recon - probe).abs().mean().item()
-        self.print(
-            f"Epoch {epoch_display}/{n_epochs} inverse_diag: "
-            f"max_final_diff={diag['max_final_diff']:.2e} "
-            f"mean_final_diff={diag['mean_final_diff']:.2e} "
-            f"n_subsets_not_converged={diag['n_not_converged']} "
-            f"round_trip_mean_abs_err={rt_err:.2e}"
+        return jnp.mean(
+            jnp.linalg.norm(force_flat, ord=2, axis=1) / (volume**0.5)
+            + jnp.linalg.norm(force_flat, ord=4, axis=1) / (volume**0.25)
+            + jnp.linalg.norm(force_flat, ord=6, axis=1) / (volume ** (1 / 6))
+            + jnp.linalg.norm(force_flat, ord=8, axis=1) / (volume ** (1 / 8))
         )
 
-    def train_step(self, theta_ori: torch.Tensor) -> float:
-        theta_ori = theta_ori.to(self.device)
-        loss = self.loss_fn(theta_ori)
-        for optimizer in self.optimizers:
-            optimizer.zero_grad()
-        self.backward(loss)
-        self._clip_gradients()
-        for optimizer in self.optimizers:
-            optimizer.step()
-        return float(loss.detach().cpu())
+    def loss_fn(self, theta_ori: Array) -> Array:
+        if self.train_beta is None:
+            raise RuntimeError("train_beta is not set")
+        return self.loss_fn_with_params(self.params, jnp.asarray(theta_ori), self.train_beta)
 
-    def evaluate_step(self, theta_ori: torch.Tensor) -> float:
-        theta_ori = theta_ori.to(self.device).requires_grad_(True)
-        loss = self.loss_fn(theta_ori)
-        return float(loss.detach().cpu())
+    def _batches(self, data: np.ndarray, batch_size: int, rng: np.random.Generator, *, shuffle: bool) -> list[np.ndarray]:
+        indices = np.arange(len(data))
+        if shuffle:
+            rng.shuffle(indices)
+        return [data[indices[start : start + batch_size]] for start in range(0, len(indices), batch_size)]
 
-    def train(self, train_data: torch.Tensor, test_data: torch.Tensor, train_beta: float, *, n_epochs: int, batch_size: int) -> None:
-        self.train_beta = train_beta
-        train_loader = torch.utils.data.DataLoader(
-            train_data,
-            batch_size=batch_size,
-            shuffle=True,
-            num_workers=self.num_workers,
-        )
-        test_loader = torch.utils.data.DataLoader(test_data, batch_size=batch_size, num_workers=self.num_workers)
-        if self.fabric is not None:
-            train_loader = self.fabric.setup_dataloaders(train_loader)
-            test_loader = self.fabric.setup_dataloaders(test_loader)
+    def train(self, train_data: Array, test_data: Array, train_beta: float, *, n_epochs: int, batch_size: int) -> None:
+        self.train_beta = float(train_beta)
+        train_np = np.asarray(train_data, dtype=np.float32)
+        test_np = np.asarray(test_data, dtype=np.float32)
+        self.model_dir.mkdir(parents=True, exist_ok=True)
+        self.dump_dir.mkdir(parents=True, exist_ok=True)
+        self.plot_dir.mkdir(parents=True, exist_ok=True)
 
+        @jax.jit
+        def train_step(params: Params, opt_state: Any, batch: Array) -> tuple[Params, Any, Array]:
+            loss, grads = jax.value_and_grad(self.loss_fn_with_params)(params, batch, self.train_beta)
+            updates, opt_state = self.optimizer.update(grads, opt_state, params)
+            params = optax.apply_updates(params, updates)
+            return params, opt_state, loss
+
+        eval_step = jax.jit(lambda params, batch: self.loss_fn_with_params(params, batch, self.train_beta))
+        diag_step = jax.jit(lambda params, batch: self.inverse_with_diagnostics(params, batch, max_iter=int(self.hyperparams.get("inverse_iters", 24)),)[1])
+        rng = np.random.default_rng(0)
         train_losses: list[float] = []
         test_losses: list[float] = []
         best_loss = float("inf")
-
+        bad_epochs = 0
         for epoch in tqdm(range(n_epochs), desc="Training epochs"):
-            self._set_models_mode(True)
-            epoch_losses = [
-                (self.train_step(batch), len(batch))
-                for batch in tqdm(train_loader, desc=f"Epoch {epoch + 1}/{n_epochs}")
-            ]
-            train_loss = self._weighted_epoch_loss(epoch_losses)
+            epoch_losses = []
+            for batch in self._batches(train_np, batch_size, rng, shuffle=True):
+                self.params, self.opt_state, loss = train_step(self.params, self.opt_state, jnp.asarray(batch))
+                epoch_losses.append(float(loss))
+            train_loss = float(np.mean(epoch_losses)) if epoch_losses else float("nan")
+            eval_losses = [float(eval_step(self.params, jnp.asarray(batch))) for batch in self._batches(test_np, batch_size, rng, shuffle=False)]
+            test_loss = float(np.mean(eval_losses)) if eval_losses else train_loss
             train_losses.append(train_loss)
-
-            self._set_models_mode(False)
-            test_epoch_losses = [
-                (self.evaluate_step(batch), len(batch))
-                for batch in tqdm(test_loader, desc="Evaluating")
-            ]
-            test_loss = self._weighted_epoch_loss(test_epoch_losses)
             test_losses.append(test_loss)
-
-            self.print(
-                f"Epoch {epoch + 1}/{n_epochs} - "
-                f"Train Loss: {train_loss:.6f} - Test Loss: {test_loss:.6f}"
+            print(f"Epoch {epoch + 1}/{n_epochs}: train_loss={train_loss:.6f} test_loss={test_loss:.6f}")
+            probe_np = test_np[: min(8, len(test_np), batch_size)]
+            diag = diag_step(self.params, jnp.asarray(probe_np))
+            diag = {key: float(jax.block_until_ready(value)) for key, value in diag.items()}
+            print(
+                f"inverse_diag: "
+                f"max_final_diff={diag['max_final_diff']:.2e} "
+                f"mean_final_diff={diag['mean_final_diff']:.2e} "
+                f"round_trip_mean_abs_err={diag['round_trip_mean_abs_err']:.2e}"
             )
-            self._maybe_log_inverse_diagnostics(test_data, batch_size, epoch + 1, n_epochs)
             if test_loss < best_loss:
-                self.save_best_model(epoch, test_loss)
                 best_loss = test_loss
-            for scheduler in self.schedulers:
-                scheduler.step(test_loss)
-
-        self.plot_training_history(train_losses, test_losses)
-        if self.fabric is not None:
-            self.fabric.barrier()
-        self.load_best_model(train_beta)
-
-    def _set_models_mode(self, is_train: bool) -> None:
-        for model in self.models:
-            model.train() if is_train else model.eval()
-
-    @staticmethod
-    def _weighted_epoch_loss(losses_and_counts: list[tuple[float, int]]) -> float:
-        total_count = sum(count for _, count in losses_and_counts)
-        if total_count == 0:
-            return float("nan")
-        return float(sum(loss * count for loss, count in losses_and_counts) / total_count)
-
-    def checkpoint_path(self, train_beta: float) -> Path:
-        return self.model_dir / f"best_model_train_beta{format_beta(train_beta)}_{self.save_tag}.pt"
-
-    def save_best_model(self, epoch: int, loss: float) -> None:
-        if self.train_beta is None:
-            raise RuntimeError("train_beta is not set")
-        if self.fabric is not None and self.fabric.global_rank != 0:
-            return
-        self.model_dir.mkdir(parents=True, exist_ok=True)
-        save_dict = {"epoch": epoch, "loss": loss}
-        for index, model in enumerate(self.models):
-            save_dict[f"model_state_dict_{index}"] = model.state_dict()
-        for index, optimizer in enumerate(self.optimizers):
-            save_dict[f"optimizer_state_dict_{index}"] = optimizer.state_dict()
-        torch.save(save_dict, self.checkpoint_path(self.train_beta))
-
-    def load_best_model(self, train_beta: float) -> None:
-        checkpoint = torch.load(self.checkpoint_path(train_beta), map_location=self.device, weights_only=False)
-        for index, model in enumerate(self.models):
-            state_dict = checkpoint[f"model_state_dict_{index}"]
-            if any(key.startswith("module.") for key in state_dict):
-                state_dict = {key.replace("module.", "", 1): value for key, value in state_dict.items()}
-            model.load_state_dict(state_dict)
-        self.print(f"Loaded best model from epoch {checkpoint['epoch'] + 1} with loss {checkpoint['loss']:.6f}")
-
-    def plot_training_history(self, train_losses: list[float], test_losses: list[float]) -> None:
-        if self.train_beta is None:
-            raise RuntimeError("train_beta is not set")
-        if self.fabric is not None and self.fabric.global_rank != 0:
-            return
-        self.plot_dir.mkdir(parents=True, exist_ok=True)
-        self.dump_dir.mkdir(parents=True, exist_ok=True)
-        beta_tag = format_beta(self.train_beta)
-
-        epochs_axis = np.arange(1, len(train_losses) + 1)
-        plt.figure(figsize=(10, 5))
-        plt.plot(epochs_axis, train_losses, label="Train")
-        plt.plot(epochs_axis, test_losses, label="Test")
-        plt.xlabel("Epoch")
-        plt.ylabel("Loss")
-        plt.legend()
-        plt.grid(True)
-        plt.tight_layout()
-        plt.savefig(self.plot_dir / f"cnn_loss_train_beta{beta_tag}_{self.save_tag}.pdf", transparent=True)
-        plt.close()
-
-        np.savetxt(self.dump_dir / f"train_loss_train_beta{beta_tag}_{self.save_tag}.csv", train_losses, fmt="%.6e")
-        np.savetxt(self.dump_dir / f"test_loss_train_beta{beta_tag}_{self.save_tag}.csv", test_losses, fmt="%.6e")
+                bad_epochs = 0
+                self.save_best_model(train_beta, epoch, test_loss)
+            else:
+                bad_epochs += 1
+                if bad_epochs >= int(self.hyperparams.get("early_stop_patience", 20)):
+                    print("Early stopping")
+                    break
+        tag = f"train_beta{format_beta(train_beta)}_{self.save_tag}"
+        np.savetxt(self.dump_dir / f"train_loss_{tag}.csv", np.asarray(train_losses), fmt="%.8e")
+        np.savetxt(self.dump_dir / f"test_loss_{tag}.csv", np.asarray(test_losses), fmt="%.8e")
+        fig, ax = plt.subplots()
+        ax.plot(train_losses, label="train")
+        ax.plot(test_losses, label="test")
+        ax.set_xlabel("epoch")
+        ax.set_ylabel("loss")
+        ax.legend()
+        fig.tight_layout()
+        fig.savefig(self.plot_dir / f"cnn_loss_{tag}.pdf", transparent=True)
+        plt.close(fig)

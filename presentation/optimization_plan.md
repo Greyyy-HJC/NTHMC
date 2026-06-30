@@ -446,7 +446,7 @@ Add columns for β=14, β=16 at T2/T3 as needed.
 
 ```bash
 cd 2du2/model_training
-torchrun --standalone --nproc_per_node=4 train.py \
+python train.py \
     --lattice_size 16 --min_beta 8.0 --max_beta 8.0 --beta_gap 0.5 \
     --n_epochs 16 --batch_size 64 --n_subsets 8 --n_workers 0 \
     --model_tag base --save_tag base_train_b8.0_L16_1029 --rand_seed 1029 \
