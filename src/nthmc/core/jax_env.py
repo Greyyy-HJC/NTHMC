@@ -8,6 +8,12 @@ import ctypes
 from pathlib import Path
 
 
+def configure_compilation_cache(default_path: str | Path) -> str:
+    """Enable JAX's persistent compilation cache unless the caller already chose one."""
+    path = os.environ.setdefault("JAX_COMPILATION_CACHE_DIR", str(Path(default_path).resolve()))
+    return path
+
+
 def bootstrap_cuda_wheel_paths(*, reexec: bool = True) -> None:
     """Re-exec with NVIDIA wheel library paths so JAX can find CUDA libs."""
     if os.environ.get("NTHMC_JAX_CUDA_BOOTSTRAPPED") == "1":

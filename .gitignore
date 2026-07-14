@@ -24,6 +24,8 @@ venv/
 # Workflow output directories
 **/logs/*
 **/artifacts/models/*
+**/artifacts/jax_cache/*
+**/artifacts/tensorflow_training_spike.json
 
 # Bash scripts
 **/sub*.sh

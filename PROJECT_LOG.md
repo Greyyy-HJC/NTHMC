@@ -2,6 +2,23 @@
 
 This is an append-only development history for NTHMC.
 
+## 2026-07-13
+
+- Removed the separate `src/nthmc/training` package and made PyTorch the sole training implementation under `nthmc.core`, `nthmc.u1`, and `nthmc.u2`; the JAX field transforms are now runtime-only for evaluation and HMC, and Optax is no longer a project dependency.
+- Made Torch `if_check_jac=True` keep checking manual vs autograd Jacobian on every transformed-force step for U(1)/U(2), instead of a one-shot startup probe that then disabled the flag; leave `if_check_jac=False` for normal fast training.
+- Switched the production U(1)/U(2) `model_training` entrypoints back to a PyTorch eager backend under `nthmc.core`, `nthmc.u1`, and `nthmc.u2`, while retaining JAX for gauge generation, evaluation, and HMC; training now writes resumable `.pt` plus canonical JAX-readable `.npz` checkpoints.
+- Added fixed masked global batches, Fabric DDP numerator/count gradient scaling, one shared AdamW per transform, and differentiable per-sample inverse early stopping with mean/max iteration diagnostics; identity transforms stop after one update.
+- Validated U(1)/U(2) GPU training and a two-process CPU DDP smoke. The exact U(2) L4/beta-1/batch-16/8-subset epoch took 127.96 seconds internally and 136.64 seconds wall at 2.65 GB host RSS, essentially matching the historical PyTorch baseline while avoiding JAX compilation failure.
+- The matching U(1) L16/beta-1/batch-64/8-subset epoch took 5.63 seconds internally and 10.66 seconds wall at 2.20 GB host RSS; inverse diagnostics reported two iterations per subset after the first epoch.
+- Rejected local `torch.compile(dynamic=True)` because higher-order autograd hit donated-buffer/create-graph incompatibility. Rejected the TensorFlow 2.21 non-XLA spike after its first trace failed to finish in 422.61 seconds and crossed the 8 GB host-memory gate (8.49 GB RSS, about 10.24 GiB GPU); the isolated TensorFlow environment and prototype were removed.
+- Restored the U(2) base CNN to the pre-JAX 18-channel compact scalar loop input (6 plaquette plus 12 rectangle channels), matching the 57,888-parameter PyTorch baseline; incompatible 24-channel JAX checkpoints now fail with an explicit shape error.
+- Benchmarked the current L4/beta-1/batch-16 U(2) training workload against the last PyTorch commit (`e3847a9`) on one RTX 3060: PyTorch completed one epoch in 142.18 seconds, while the JAX cold compile was killed after 573.52 seconds at 52.85 GB peak host RSS before producing a cache entry.
+- Reduced U(1)/U(2) JAX training compilation graphs by scanning stacked subset parameters, keeping train/eval batches at fixed masked shapes, reusing dynamic-beta/tolerance JIT callables, prewarming timed training graphs, and enabling per-system persistent compilation caches.
+- Split inverse execution into a reverse-mode-safe bounded `scan` with conditional early-idling for training and a true dynamically terminating `while_loop` for public/diagnostic calls; added per-sample convergence and iteration-count diagnostics while keeping checkpoint pytrees unchanged.
+- Rewrote U(1)/U(2) JAX `models.py` into a readable LocalNet-style layout (`LocalNet.init`/`apply`, `choose_model(tag) -> model class`) and dropped all non-`base` model tags; `FieldTransformation` selects the CNN via `self.model = choose_model(model_tag)`.
+- Kept unit tests lightweight on CPU: L=2, `n_subsets=1`, no FT-HMC/HMC chain smokes, no JIT jac compile, no data-parallel training smokes.
+- Added an isolated U(2) manual-logdet regression test that compares an eight-subset nontrivial transform against the full field Jacobian in float64, plus a float32 near-identity absolute-tolerance check.
+
 ## 2026-06-30
 
 - Migrated the active codebase to JAX-only: U(1)/U(2) observables, HMC, FT-HMC entrypoints, training scripts, shell workflows, dependencies, and tests no longer use the previous training/evaluation stack.

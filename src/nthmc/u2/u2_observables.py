@@ -239,6 +239,30 @@ def get_plaq_mask(index: int, batch_size: int, lattice_size: int) -> Array:
 
 def get_rect_mask(index: int, batch_size: int, lattice_size: int) -> Array:
     mask = np.zeros((1, 2, lattice_size, lattice_size, 1), dtype=bool)
+    if index == 0:
+        mask[:, 1, 1::2, :, :] = True
+        mask[:, 1, 0::2, 1::2, :] = True
+    elif index == 1:
+        mask[:, 1, 1::2, :, :] = True
+        mask[:, 1, 0::2, 0::2, :] = True
+    elif index == 2:
+        mask[:, 1, 0::2, :, :] = True
+        mask[:, 1, 1::2, 1::2, :] = True
+    elif index == 3:
+        mask[:, 1, 0::2, :, :] = True
+        mask[:, 1, 1::2, 0::2, :] = True
+    elif index == 4:
+        mask[:, 0, :, 1::2, :] = True
+        mask[:, 0, 1::2, 0::2, :] = True
+    elif index == 5:
+        mask[:, 0, :, 0::2, :] = True
+        mask[:, 0, 1::2, 1::2, :] = True
+    elif index == 6:
+        mask[:, 0, :, 1::2, :] = True
+        mask[:, 0, 0::2, 0::2, :] = True
+    elif index == 7:
+        mask[:, 0, :, 0::2, :] = True
+        mask[:, 0, 0::2, 1::2, :] = True
     return jnp.broadcast_to(jnp.asarray(mask), (batch_size, 2, lattice_size, lattice_size, 1))
 
 

@@ -1,5 +1,6 @@
 jax[cuda12]
-optax
+torch
+lightning
 numpy
 scipy
 matplotlib

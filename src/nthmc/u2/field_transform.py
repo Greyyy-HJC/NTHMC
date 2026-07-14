@@ -7,16 +7,10 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-import matplotlib
 import numpy as np
-import optax
-from tqdm import tqdm
 
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
-from nthmc.core.checkpoint import load_checkpoint, save_checkpoint
-from nthmc.u2.models import apply_model, init_transform_params
+from nthmc.core.checkpoint import load_checkpoint
+from nthmc.u2.models import choose_model, init_transform_params
 from nthmc.u2.u2_observables import (
     action_from_field,
     format_beta,
@@ -42,7 +36,7 @@ LoopToken = tuple[int, int | tuple[int, int] | None, int | tuple[int, int] | Non
 
 
 class FieldTransformation:
-    """JAX U(2) coupling transform with exact active-link Jacobian blocks."""
+    """JAX U(2) field transformation for evaluation and HMC."""
 
     def __init__(
         self,
@@ -63,17 +57,11 @@ class FieldTransformation:
         self.n_subsets = n_subsets
         self.if_check_jac = if_check_jac
         self.model_tag = model_tag
+        self.model = choose_model(model_tag)
         self.save_tag = save_tag or "opt"
         self.model_dir = Path(model_dir)
-        self.plot_dir = Path(plot_dir)
-        self.dump_dir = Path(dump_dir)
-        self.train_beta: float | None = None
         self.hyperparams: dict[str, Any] = {
             "init_std": 0.001,
-            "lr": 0.001,
-            "weight_decay": 0.0001,
-            "max_grad_norm": 10.0,
-            "early_stop_patience": 20,
             "inverse_max_iters": 200,
             "inverse_tol": 1e-6,
         }
@@ -81,20 +69,24 @@ class FieldTransformation:
             self.hyperparams.update(hyperparams)
         self.params = init_transform_params(
             jax.random.PRNGKey(0),
-            model_tag,
+            self.model,
             n_subsets,
             init_std=float(self.hyperparams["init_std"]),
         )
-        self.optimizer = optax.chain(
-            optax.clip_by_global_norm(float(self.hyperparams["max_grad_norm"])),
-            optax.adamw(float(self.hyperparams["lr"]), weight_decay=float(self.hyperparams["weight_decay"])),
+        self._link_masks = jnp.stack(
+            [get_link_mask(index, 1, self.lattice_size)[0] for index in range(self.n_subsets)]
         )
-        self.opt_state = self.optimizer.init(self.params)
+        self._plaq_masks = jnp.stack(
+            [get_plaq_mask(index, 1, self.lattice_size)[0] for index in range(self.n_subsets)]
+        )
+        self._rect_masks = jnp.stack(
+            [get_rect_mask(index, 1, self.lattice_size)[0] for index in range(self.n_subsets)]
+        )
 
     def _checkpoint_template(self) -> Params:
         return init_transform_params(
             jax.random.PRNGKey(0),
-            self.model_tag,
+            self.model,
             self.n_subsets,
             init_std=float(self.hyperparams["init_std"]),
         )
@@ -102,48 +94,54 @@ class FieldTransformation:
     def checkpoint_path(self, train_beta: float) -> Path:
         return self.model_dir / f"best_model_train_beta{format_beta(train_beta)}_{self.save_tag}.npz"
 
-    def save_best_model(self, train_beta: float, epoch: int, loss: float) -> None:
-        metadata = {
-            "system": "2du2",
-            "transform": "neural_u2_jax",
-            "model_tag": self.model_tag,
-            "n_subsets": self.n_subsets,
-            "lattice_size": self.lattice_size,
-            "train_beta": float(train_beta),
-            "epoch": int(epoch),
-            "loss": float(loss),
-            "hyperparams": self.hyperparams,
-        }
-        save_checkpoint(self.checkpoint_path(train_beta), params=self.params, opt_state=self.opt_state, metadata=metadata)
-
     def load_best_model(self, train_beta: float) -> None:
         self.params, metadata = load_checkpoint(self.checkpoint_path(train_beta), self._checkpoint_template())
-        self.opt_state = self.optimizer.init(self.params)
         print(f"Loaded JAX U(2) checkpoint from epoch {metadata.get('epoch')} with loss {metadata.get('loss')}")
 
     @staticmethod
     def _features_from_loops(loops: Array) -> Array:
-        features = loop_sin_cos_features(loops)
+        loops = u2_normalize(loops)
+        phase = loops[..., :1]
+        q0 = loops[..., 1:2]
+        cos_phase = jnp.cos(phase)
+        sin_phase = jnp.sin(phase)
+        trace_sq_factor = 2 * (2 * q0**2 - 1)
+        features = jnp.concatenate(
+            [
+                q0 * cos_phase,
+                q0 * sin_phase,
+                cos_phase,
+                sin_phase,
+                trace_sq_factor * jnp.cos(2 * phase),
+                trace_sq_factor * jnp.sin(2 * phase),
+            ],
+            axis=-1,
+        )
         return jnp.moveaxis(features, -1, 1)
 
     @staticmethod
     def _masked_loops(loops: Array, mask: Array) -> Array:
         return jnp.where(mask, loops, identity_like(loops))
 
-    def _cnn_features(self, links: Array, index: int) -> tuple[Array, Array]:
+    @staticmethod
+    def _stack_subset_params(params: Params) -> Params:
+        return jax.tree_util.tree_map(lambda *values: jnp.stack(values), *params["subsets"])
+
+    def _cnn_features_with_masks(self, links: Array, plaq_mask: Array, rect_mask: Array) -> tuple[Array, Array]:
         batch_size = links.shape[0]
         plaquettes = plaquette_from_field_batch(links)
         rectangles = rectangle_from_field_batch(links)
-        plaq_mask = get_plaq_mask(index, batch_size, self.lattice_size)
-        rect_mask = get_rect_mask(index, batch_size, self.lattice_size)
+        plaq_mask = jnp.broadcast_to(plaq_mask, (batch_size, *plaq_mask.shape))
+        rect_mask = jnp.broadcast_to(rect_mask, (batch_size, *rect_mask.shape))
         plaq_features = self._features_from_loops(self._masked_loops(plaquettes, plaq_mask))
-        rect_features = self._features_from_loops(self._masked_loops(rectangles, rect_mask)).reshape(
-            batch_size,
-            16,
-            self.lattice_size,
-            self.lattice_size,
-        )
+        rect_features = self._features_from_loops(
+            self._masked_loops(rectangles, rect_mask)
+        ).swapaxes(1, 2)
+        rect_features = rect_features.reshape(batch_size, 12, self.lattice_size, self.lattice_size)
         return plaq_features, rect_features
+
+    def _cnn_features(self, links: Array, index: int) -> tuple[Array, Array]:
+        return self._cnn_features_with_masks(links, self._plaq_masks[index], self._rect_masks[index])
 
     @staticmethod
     def _loop_product(parts: list[Array]) -> Array:
@@ -328,14 +326,30 @@ class FieldTransformation:
         return jnp.stack([per_loop[:, 0:4].sum(axis=1), per_loop[:, 4:8].sum(axis=1)], axis=1)
 
     def _compute_delta(self, params: Params, links: Array, index: int) -> Array:
+        return self._compute_delta_subset(
+            params["subsets"][index],
+            links,
+            self._link_masks[index],
+            self._plaq_masks[index],
+            self._rect_masks[index],
+        )
+
+    def _compute_delta_subset(
+        self,
+        subset_params: Params,
+        links: Array,
+        link_mask: Array,
+        plaq_mask: Array,
+        rect_mask: Array,
+    ) -> Array:
         batch_size = links.shape[0]
-        plaq_features, rect_features = self._cnn_features(links, index)
-        plaq_coeffs, rect_coeffs = apply_model(params["subsets"][index], self.model_tag, plaq_features, rect_features)
+        plaq_features, rect_features = self._cnn_features_with_masks(links, plaq_mask, rect_mask)
+        plaq_coeffs, rect_coeffs = self.model.apply(subset_params, plaq_features, rect_features)
         plaq_coeffs = plaq_coeffs.reshape(batch_size, 4, 4, self.lattice_size, self.lattice_size)
         rect_coeffs = rect_coeffs.reshape(batch_size, 8, 4, self.lattice_size, self.lattice_size)
         delta = self._plaq_delta(plaq_coeffs, self._plaq_loop_stack(links))
         delta = delta + self._rect_delta(rect_coeffs, self._rect_loop_stack(links))
-        return delta * get_link_mask(index, batch_size, self.lattice_size)
+        return delta * link_mask
 
     @staticmethod
     def _identity_tangent_like(links: Array) -> Array:
@@ -429,13 +443,13 @@ class FieldTransformation:
     def _layer_jacobian_blocks(
         self,
         links: Array,
-        index: int,
+        mask: Array,
         plaq_coeffs: Array,
         rect_coeffs: Array,
         delta: Array,
     ) -> Array:
         batch_size = links.shape[0]
-        mask = get_link_mask(index, batch_size, self.lattice_size)
+        mask = jnp.broadcast_to(mask, (batch_size, *mask.shape))
         link_tangent = self._identity_tangent_like(links) * mask.astype(links.dtype)[..., jnp.newaxis]
 
         plaq_loops, plaq_tangent = self._plaq_loop_stack_with_tangent(links, link_tangent)
@@ -452,10 +466,20 @@ class FieldTransformation:
         return u2_normalize(u2_mul(u2_exp(delta), links))
 
     def forward_with_params(self, params: Params, links: Array) -> Array:
-        links_curr = u2_normalize(links)
-        for index in range(self.n_subsets):
-            links_curr = self._apply_subset(params, links_curr, index)
-        return u2_normalize(links_curr)
+        subset_params = self._stack_subset_params(params)
+
+        def apply_subset(links_curr: Array, inputs: tuple[Params, Array, Array, Array]) -> tuple[Array, None]:
+            current_params, link_mask, plaq_mask, rect_mask = inputs
+            delta = self._compute_delta_subset(current_params, links_curr, link_mask, plaq_mask, rect_mask)
+            links_curr = u2_normalize(u2_mul(u2_exp(delta), links_curr))
+            return links_curr, None
+
+        links_out, _ = jax.lax.scan(
+            jax.checkpoint(apply_subset, prevent_cse=False),
+            u2_normalize(links),
+            (subset_params, self._link_masks, self._plaq_masks, self._rect_masks),
+        )
+        return u2_normalize(links_out)
 
     def forward(self, links: Array) -> Array:
         links = jnp.asarray(links)
@@ -466,23 +490,85 @@ class FieldTransformation:
     def field_transformation(self, links: Array) -> Array:
         return self.forward(jnp.asarray(links))
 
-    def _inverse_settings(self, max_iter: int | None = None, tol: float | None = None) -> tuple[int, float]:
+    def _inverse_settings(self, max_iter: int | None = None, tol: Array | None = None) -> tuple[int, Array]:
         resolved_max_iter = int(
             max_iter
             or self.hyperparams.get("inverse_max_iters", self.hyperparams.get("inverse_iters", 200))
         )
-        resolved_tol = float(tol or self.hyperparams.get("inverse_tol", 1e-6))
+        resolved_tol = self.hyperparams.get("inverse_tol", 1e-6) if tol is None else tol
         return resolved_max_iter, resolved_tol
 
-    def inverse_with_params(
+    @staticmethod
+    def _valid_sample_mask(batch: Array, sample_mask: Array | None) -> Array:
+        if sample_mask is None:
+            return jnp.ones((batch.shape[0],), dtype=bool)
+        return jnp.asarray(sample_mask, dtype=bool)
+
+    @staticmethod
+    def _masked_batch_mean(values: Array, valid: Array) -> Array:
+        weights = valid.astype(values.dtype)
+        return jnp.sum(values * weights) / jnp.clip(jnp.sum(weights), min=1)
+
+    def _inverse_update(
         self,
-        params: Params,
-        links: Array,
-        *,
-        max_iter: int | None = None,
-        tol: float | None = None,
-    ) -> Array:
-        return self.inverse_with_diagnostics(params, links, max_iter=max_iter, tol=tol)[0]
+        target: Array,
+        links_iter: Array,
+        subset_inputs: tuple[Params, Array, Array, Array],
+    ) -> tuple[Array, Array]:
+        subset_params, link_mask, plaq_mask, rect_mask = subset_inputs
+        delta = self._compute_delta_subset(subset_params, links_iter, link_mask, plaq_mask, rect_mask)
+        links_next = u2_normalize(u2_mul(u2_exp(-delta), target))
+        relative = u2_log(u2_mul(links_next, u2_conj(links_iter)))
+        reduce_axes = tuple(range(1, links_iter.ndim))
+        denominator = jnp.clip(jnp.sqrt(jnp.sum(u2_log(links_iter) ** 2, axis=reduce_axes)), min=1e-12)
+        next_diff = jax.lax.stop_gradient(
+            jnp.sqrt(jnp.sum(relative**2, axis=reduce_axes)) / denominator
+        )
+        return links_next, next_diff
+
+    def _inverse_subset_dynamic(
+        self,
+        target: Array,
+        subset_inputs: tuple[Params, Array, Array, Array],
+        valid: Array,
+        max_iter: int,
+        tol: Array,
+    ) -> tuple[Array, tuple[Array, Array, Array]]:
+        init = (
+            target,
+            jnp.where(valid, jnp.inf, 0).astype(target.dtype),
+            jnp.logical_not(valid),
+            jnp.zeros(valid.shape, dtype=jnp.int32),
+            jnp.asarray(0, dtype=jnp.int32),
+        )
+
+        def condition(carry: tuple[Array, Array, Array, Array, Array]) -> Array:
+            return jnp.logical_and(carry[4] < max_iter, jnp.any(jnp.logical_not(carry[2])))
+
+        def update(carry: tuple[Array, Array, Array, Array, Array]):
+            links_iter, diff, converged, iterations, step = carry
+            active = jnp.logical_not(converged)
+            links_next, next_diff = self._inverse_update(target, links_iter, subset_inputs)
+            broadcast_active = active.reshape((active.shape[0],) + (1,) * (links_iter.ndim - 1))
+            links_iter = jnp.where(broadcast_active, links_next, links_iter)
+            diff = jnp.where(active, next_diff, diff)
+            converged = jnp.logical_or(converged, next_diff < tol)
+            iterations = iterations + active.astype(jnp.int32)
+            return links_iter, diff, converged, iterations, step + 1
+
+        result, final_diff, converged, iterations, _ = jax.lax.while_loop(condition, update, init)
+        return result, (final_diff, converged, iterations)
+
+    def _inverse_dynamic_scan(
+        self, params: Params, links: Array, valid: Array, max_iter: int, tol: Array
+    ) -> tuple[Array, tuple[Array, Array, Array]]:
+        subset_params = self._stack_subset_params(params)
+        return jax.lax.scan(
+            lambda current, inputs: self._inverse_subset_dynamic(current, inputs, valid, max_iter, tol),
+            u2_normalize(links),
+            (subset_params, self._link_masks, self._plaq_masks, self._rect_masks),
+            reverse=True,
+        )
 
     def inverse_with_diagnostics(
         self,
@@ -491,49 +577,29 @@ class FieldTransformation:
         *,
         max_iter: int | None = None,
         tol: float | None = None,
+        sample_mask: Array | None = None,
     ) -> tuple[Array, dict[str, Array]]:
-        max_iter, tol = self._inverse_settings(max_iter, tol)
-        links_curr = u2_normalize(links)
-        final_diffs = []
-        n_not_converged = jnp.asarray(0, dtype=jnp.int32)
-
-        for index in reversed(range(self.n_subsets)):
-            links_iter = links_curr
-            init_diff = jnp.asarray(jnp.inf, dtype=links.dtype)
-            init_converged = jnp.asarray(False)
-
-            def iteration_step(carry: tuple[Array, Array, Array], _: Array) -> tuple[tuple[Array, Array, Array], None]:
-                links_iter, diff, converged = carry
-                delta = self._compute_delta(params, links_iter, index)
-                links_next = u2_normalize(u2_mul(u2_exp(-delta), links_curr))
-                relative = u2_log(u2_mul(links_next, u2_conj(links_iter)))
-                denominator = jnp.clip(jnp.linalg.norm(u2_log(links_iter)), min=1e-12)
-                next_diff = jnp.linalg.norm(relative) / denominator
-                should_update = jnp.logical_not(converged)
-                links_iter = jnp.where(should_update, links_next, links_iter)
-                diff = jnp.where(should_update, next_diff, diff)
-                converged = jnp.logical_or(converged, next_diff < tol)
-                return (links_iter, diff, converged), None
-
-            (links_iter, final_diff, converged), _ = jax.lax.scan(
-                iteration_step,
-                (links_iter, init_diff, init_converged),
-                xs=None,
-                length=max_iter,
-            )
-            final_diffs.append(final_diff)
-            n_not_converged = n_not_converged + jnp.asarray(jnp.logical_not(converged), dtype=jnp.int32)
-            links_curr = links_iter
-
-        out = u2_normalize(links_curr)
-        final_diffs = jnp.stack(final_diffs)
+        max_iter, resolved_tol = self._inverse_settings(max_iter, tol)
+        valid = self._valid_sample_mask(links, sample_mask)
+        out, (final_diffs, converged, iterations) = self._inverse_dynamic_scan(
+            params, links, valid, max_iter, jnp.asarray(resolved_tol, links.dtype)
+        )
+        out = u2_normalize(out)
         recon = self.forward_with_params(params, out)
         relative = u2_log(u2_mul(recon, u2_conj(links)))
+        reduce_axes = tuple(range(1, relative.ndim))
+        round_trip_per_sample = jnp.mean(jnp.abs(relative), axis=reduce_axes)
+        valid_matrix = jnp.broadcast_to(valid, final_diffs.shape)
+        valid_diffs = jnp.where(valid_matrix, final_diffs, 0)
+        valid_iterations = jnp.where(valid_matrix, iterations, 0)
+        valid_count = jnp.clip(jnp.sum(valid_matrix), min=1)
         diagnostics = {
-            "max_final_diff": jnp.max(final_diffs),
-            "mean_final_diff": jnp.mean(final_diffs),
-            "n_not_converged": n_not_converged,
-            "round_trip_mean_abs_err": jnp.mean(jnp.abs(relative)),
+            "max_final_diff": jnp.max(valid_diffs),
+            "mean_final_diff": jnp.sum(valid_diffs) / valid_count,
+            "mean_iterations": jnp.sum(valid_iterations) / valid_count,
+            "max_iterations": jnp.max(valid_iterations),
+            "n_not_converged": jnp.sum(jnp.logical_and(jnp.logical_not(converged), valid_matrix)),
+            "round_trip_mean_abs_err": self._masked_batch_mean(round_trip_per_sample, valid),
         }
         return out, diagnostics
 
@@ -558,23 +624,45 @@ class FieldTransformation:
         return self.inverse(links)
 
     def _subset_coeffs_delta(self, params: Params, links: Array, index: int) -> tuple[Array, Array, Array]:
+        return self._subset_coeffs_delta_with_masks(
+            params["subsets"][index],
+            links,
+            self._link_masks[index],
+            self._plaq_masks[index],
+            self._rect_masks[index],
+        )
+
+    def _subset_coeffs_delta_with_masks(
+        self,
+        subset_params: Params,
+        links: Array,
+        link_mask: Array,
+        plaq_mask: Array,
+        rect_mask: Array,
+    ) -> tuple[Array, Array, Array]:
         batch_size = links.shape[0]
-        plaq_features, rect_features = self._cnn_features(links, index)
-        plaq_coeffs, rect_coeffs = apply_model(params["subsets"][index], self.model_tag, plaq_features, rect_features)
+        plaq_features, rect_features = self._cnn_features_with_masks(links, plaq_mask, rect_mask)
+        plaq_coeffs, rect_coeffs = self.model.apply(subset_params, plaq_features, rect_features)
         plaq_coeffs = plaq_coeffs.reshape(batch_size, 4, 4, self.lattice_size, self.lattice_size)
         rect_coeffs = rect_coeffs.reshape(batch_size, 8, 4, self.lattice_size, self.lattice_size)
         delta = self._plaq_delta(plaq_coeffs, self._plaq_loop_stack(links))
         delta = delta + self._rect_delta(rect_coeffs, self._rect_loop_stack(links))
-        delta = delta * get_link_mask(index, batch_size, self.lattice_size)
+        delta = delta * link_mask
         return plaq_coeffs, rect_coeffs, delta
 
     def compute_jac_logdet_with_params(self, params: Params, links: Array) -> Array:
-        links_curr = u2_normalize(links)
-        logdet = jnp.zeros((links.shape[0],), dtype=links.dtype)
-        for index in range(self.n_subsets):
-            plaq_coeffs, rect_coeffs, delta = self._subset_coeffs_delta(params, links_curr, index)
-            jacobian_blocks = self._layer_jacobian_blocks(links_curr, index, plaq_coeffs, rect_coeffs, delta)
-            mask = get_link_mask(index, links.shape[0], self.lattice_size)[..., 0]
+        subset_params = self._stack_subset_params(params)
+
+        def accumulate(carry: tuple[Array, Array], inputs: tuple[Params, Array, Array, Array]):
+            links_curr, logdet = carry
+            current_params, link_mask, plaq_mask, rect_mask = inputs
+            plaq_coeffs, rect_coeffs, delta = self._subset_coeffs_delta_with_masks(
+                current_params, links_curr, link_mask, plaq_mask, rect_mask
+            )
+            jacobian_blocks = self._layer_jacobian_blocks(
+                links_curr, link_mask, plaq_coeffs, rect_coeffs, delta
+            )
+            mask = jnp.broadcast_to(link_mask, (links.shape[0], *link_mask.shape))[..., 0]
             blocks = jacobian_blocks.reshape(links.shape[0], -1, 4, 4)
             mask_flat = mask.reshape(links.shape[0], -1)
             identity = jnp.eye(4, dtype=links.dtype)
@@ -582,6 +670,13 @@ class FieldTransformation:
             _, local_logdet = jnp.linalg.slogdet(blocks)
             logdet = logdet + jnp.sum(local_logdet, axis=1)
             links_curr = u2_normalize(u2_mul(u2_exp(delta), links_curr))
+            return (links_curr, logdet), None
+
+        (_, logdet), _ = jax.lax.scan(
+            jax.checkpoint(accumulate, prevent_cse=False),
+            (u2_normalize(links), jnp.zeros((links.shape[0],), dtype=links.dtype)),
+            (subset_params, self._link_masks, self._plaq_masks, self._rect_masks),
+        )
         return logdet
 
     def compute_jac_logdet_autodiff_with_params(self, params: Params, links: Array) -> Array:
@@ -648,178 +743,3 @@ class FieldTransformation:
             return jax.grad(varied_action)(jnp.zeros((*link_field.shape[:-1], 4), dtype=link_field.dtype))
 
         return jax.vmap(original_force_single)(jnp.asarray(links))
-
-    def loss_fn_with_params(self, params: Params, links_ori: Array, beta: float) -> Array:
-        links_new = self.inverse_with_params(params, links_ori)
-
-        def force_single(link_field: Array) -> Array:
-            def varied_action(algebra: Array) -> Array:
-                return self.new_action_with_params(params, u2_mul(u2_exp(algebra), link_field), beta)
-
-            return jax.grad(varied_action)(jnp.zeros((*link_field.shape[:-1], 4), dtype=link_field.dtype))
-
-        force = jax.vmap(force_single)(links_new)
-        volume = self.lattice_size * self.lattice_size
-        flat = force.reshape(force.shape[0], -1)
-        return jnp.mean(
-            jnp.linalg.norm(flat, ord=2, axis=1) / (volume**0.5)
-            + jnp.linalg.norm(flat, ord=4, axis=1) / (volume**0.25)
-            + jnp.linalg.norm(flat, ord=6, axis=1) / (volume ** (1 / 6))
-            + jnp.linalg.norm(flat, ord=8, axis=1) / (volume ** (1 / 8))
-        )
-
-    def loss_fn(self, links: Array) -> Array:
-        if self.train_beta is None:
-            raise RuntimeError("train_beta is not set")
-        return self.loss_fn_with_params(self.params, jnp.asarray(links), self.train_beta)
-
-    def _batches(self, data: np.ndarray, batch_size: int, rng: np.random.Generator, *, shuffle: bool) -> list[np.ndarray]:
-        indices = np.arange(len(data))
-        if shuffle:
-            rng.shuffle(indices)
-        return [data[indices[start : start + batch_size]] for start in range(0, len(indices), batch_size)]
-
-    @staticmethod
-    def _unreplicate(tree: Any) -> Any:
-        return jax.tree_util.tree_map(lambda value: value[0], tree)
-
-    @staticmethod
-    def _shard_batch(batch: np.ndarray, n_devices: int) -> Array:
-        if len(batch) % n_devices != 0:
-            raise ValueError(f"Batch length {len(batch)} is not divisible by local_device_count={n_devices}")
-        return jnp.asarray(batch.reshape(n_devices, len(batch) // n_devices, *batch.shape[1:]))
-
-    def train(
-        self,
-        train_data: Array,
-        test_data: Array,
-        train_beta: float,
-        *,
-        n_epochs: int,
-        batch_size: int,
-        data_parallel: bool = False,
-    ) -> None:
-        self.train_beta = float(train_beta)
-        train_np = np.asarray(train_data, dtype=np.float32)
-        test_np = np.asarray(test_data, dtype=np.float32)
-        self.model_dir.mkdir(parents=True, exist_ok=True)
-        self.dump_dir.mkdir(parents=True, exist_ok=True)
-        self.plot_dir.mkdir(parents=True, exist_ok=True)
-        devices = jax.local_devices()
-        n_devices = len(devices)
-        if data_parallel:
-            if batch_size % n_devices != 0:
-                raise ValueError(
-                    f"--data_parallel requires batch_size ({batch_size}) to be divisible by "
-                    f"jax.local_device_count() ({n_devices})"
-                )
-            print(f"data_parallel: enabled with local_device_count={n_devices}")
-
-        @jax.jit
-        def train_step(params: Params, opt_state: Any, batch: Array) -> tuple[Params, Any, Array]:
-            loss, grads = jax.value_and_grad(self.loss_fn_with_params)(params, batch, self.train_beta)
-            updates, opt_state = self.optimizer.update(grads, opt_state, params)
-            return optax.apply_updates(params, updates), opt_state, loss
-
-        eval_step = jax.jit(lambda params, batch: self.loss_fn_with_params(params, batch, self.train_beta))
-        train_step_parallel = jax.pmap(
-            lambda params, opt_state, batch: self._parallel_train_step(params, opt_state, batch),
-            axis_name="devices",
-            devices=devices,
-        )
-        eval_step_parallel = jax.pmap(
-            lambda params, batch: jax.lax.pmean(self.loss_fn_with_params(params, batch, self.train_beta), axis_name="devices"),
-            axis_name="devices",
-            devices=devices,
-        )
-        diag_step = jax.jit(
-            lambda params, batch: self.inverse_with_diagnostics(
-                params,
-                batch,
-                max_iter=int(self.hyperparams.get("inverse_max_iters", self.hyperparams.get("inverse_iters", 200))),
-                tol=float(self.hyperparams.get("inverse_tol", 1e-6)),
-            )[1]
-        )
-        rng = np.random.default_rng(0)
-        train_losses: list[float] = []
-        test_losses: list[float] = []
-        best_loss = float("inf")
-        bad_epochs = 0
-        params_parallel = jax.device_put_replicated(self.params, devices) if data_parallel else None
-        opt_state_parallel = jax.device_put_replicated(self.opt_state, devices) if data_parallel else None
-        for epoch in tqdm(range(n_epochs), desc="Training epochs"):
-            epoch_losses = []
-            for batch in self._batches(train_np, batch_size, rng, shuffle=True):
-                if data_parallel and len(batch) % n_devices == 0:
-                    params_parallel, opt_state_parallel, loss = train_step_parallel(
-                        params_parallel,
-                        opt_state_parallel,
-                        self._shard_batch(batch, n_devices),
-                    )
-                    loss = loss[0]
-                else:
-                    if data_parallel:
-                        self.params = self._unreplicate(params_parallel)
-                        self.opt_state = self._unreplicate(opt_state_parallel)
-                    self.params, self.opt_state, loss = train_step(self.params, self.opt_state, jnp.asarray(batch))
-                    if data_parallel:
-                        params_parallel = jax.device_put_replicated(self.params, devices)
-                        opt_state_parallel = jax.device_put_replicated(self.opt_state, devices)
-                epoch_losses.append(float(loss))
-            train_loss = float(np.mean(epoch_losses)) if epoch_losses else float("nan")
-            eval_losses = []
-            for batch in self._batches(test_np, batch_size, rng, shuffle=False):
-                if data_parallel and len(batch) % n_devices == 0:
-                    loss = eval_step_parallel(params_parallel, self._shard_batch(batch, n_devices))[0]
-                else:
-                    params = self._unreplicate(params_parallel) if data_parallel else self.params
-                    loss = eval_step(params, jnp.asarray(batch))
-                eval_losses.append(float(loss))
-            test_loss = float(np.mean(eval_losses)) if eval_losses else train_loss
-            train_losses.append(train_loss)
-            test_losses.append(test_loss)
-            print(f"Epoch {epoch + 1}/{n_epochs}: train_loss={train_loss:.6f} test_loss={test_loss:.6f}")
-            if data_parallel:
-                self.params = self._unreplicate(params_parallel)
-                self.opt_state = self._unreplicate(opt_state_parallel)
-            probe_np = test_np[: min(8, len(test_np), batch_size)]
-            diag = diag_step(self.params, jnp.asarray(probe_np))
-            diag = {key: float(jax.block_until_ready(value)) for key, value in diag.items()}
-            print(
-                f"inverse_diag: "
-                f"max_final_diff={diag['max_final_diff']:.2e} "
-                f"mean_final_diff={diag['mean_final_diff']:.2e} "
-                f"n_not_converged={diag['n_not_converged']:.0f} "
-                f"round_trip_mean_abs_err={diag['round_trip_mean_abs_err']:.2e}"
-            )
-            if test_loss < best_loss:
-                best_loss = test_loss
-                bad_epochs = 0
-                self.save_best_model(train_beta, epoch, test_loss)
-            else:
-                bad_epochs += 1
-                if bad_epochs >= int(self.hyperparams.get("early_stop_patience", 20)):
-                    print("Early stopping")
-                    break
-        if data_parallel:
-            self.params = self._unreplicate(params_parallel)
-            self.opt_state = self._unreplicate(opt_state_parallel)
-        tag = f"train_beta{format_beta(train_beta)}_{self.save_tag}"
-        np.savetxt(self.dump_dir / f"train_loss_{tag}.csv", np.asarray(train_losses), fmt="%.8e")
-        np.savetxt(self.dump_dir / f"test_loss_{tag}.csv", np.asarray(test_losses), fmt="%.8e")
-        fig, ax = plt.subplots()
-        ax.plot(train_losses, label="train")
-        ax.plot(test_losses, label="test")
-        ax.set_xlabel("epoch")
-        ax.set_ylabel("loss")
-        ax.legend()
-        fig.tight_layout()
-        fig.savefig(self.plot_dir / f"cnn_loss_{tag}.pdf", transparent=True)
-        plt.close(fig)
-
-    def _parallel_train_step(self, params: Params, opt_state: Any, batch: Array) -> tuple[Params, Any, Array]:
-        loss, grads = jax.value_and_grad(self.loss_fn_with_params)(params, batch, self.train_beta)
-        grads = jax.lax.pmean(grads, axis_name="devices")
-        loss = jax.lax.pmean(loss, axis_name="devices")
-        updates, opt_state = self.optimizer.update(grads, opt_state, params)
-        return optax.apply_updates(params, updates), opt_state, loss
