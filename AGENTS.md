@@ -49,6 +49,16 @@ Turn tasks into verifiable outcomes.
 - After each meaningful implementation pass, check whether `PROJECT_LOG.md` should be updated.
 - Keep generated arrays, logs, plots, and checkpoints out of source-oriented directories.
 
+## Git Synchronization Policy
+
+- Keep `.gitignore` aligned with the `origin/main` baseline before adding new rules.
+- Keep all `*.log` files and `**/sub*.sh` PBS job scripts local and unsynchronized.
+- Track reusable generators such as `gen_sub.sh`; their generated `scripts/sub_*.sh` files stay local.
+- Keep gauge arrays, model checkpoints, model artifacts, and compilation caches local.
+- Track generated plot PDFs and evaluation dump CSV/JSON files in their established output directories.
+- Do not add broad ignore rules covering complete `dumps` or `plots` directory trees.
+- Preserve the `!**/.gitkeep` exception for empty workflow directories.
+
 ## Project-Specific Rules
 
 - Keep `2du1` and `2du2` structurally symmetric unless a documented physics or workflow reason requires a difference.
@@ -61,7 +71,7 @@ Turn tasks into verifiable outcomes.
 
 ## Documentation Maintenance
 
-- Keep `SPEC.md` aligned with structure changes.
+- Keep `README.md` aligned with current structure and public workflow changes.
 - Update `PROJECT_LOG.md` when a meaningful change is made.
 - Keep README content concise and human-facing.
 - If multilingual docs are added later, keep their structure aligned.

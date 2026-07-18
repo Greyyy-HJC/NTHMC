@@ -49,6 +49,15 @@ def local_batch(
     return batch[start : start + local_size], mask[start : start + local_size]
 
 
+def global_batch_size(per_rank_batch_size: int, world_size: int) -> int:
+    """Return the global batch size for a per-rank training batch size."""
+    if per_rank_batch_size <= 0:
+        raise ValueError("per-rank batch size must be positive")
+    if world_size <= 0:
+        raise ValueError("world size must be positive")
+    return per_rank_batch_size * world_size
+
+
 def unwrap_model(model: torch.nn.Module, fabric: Any | None) -> torch.nn.Module:
     del fabric
     return model.module if hasattr(model, "module") else model

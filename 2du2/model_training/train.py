@@ -35,6 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--n_subsets", type=int, default=8)
     parser.add_argument("--model_tag", type=str, default="base")
     parser.add_argument("--save_tag", type=str, default=None)
+    parser.add_argument("--config_tag", type=str, default=None)
     parser.add_argument("--rand_seed", type=int, default=1331)
     parser.add_argument("--if_check_jac", action="store_true")
     parser.add_argument("--lr", type=float, default=None)
@@ -132,7 +133,8 @@ def main() -> None:
     for train_beta in beta_values(args.min_beta, args.max_beta, args.beta_gap):
         beta_start = time.time()
         beta_tag = format_beta(train_beta)
-        data_path = gauge_dir / f"links_L{args.lattice_size}_beta{beta_tag}.npy"
+        config_suffix = f"_{args.config_tag}" if args.config_tag else ""
+        data_path = gauge_dir / f"links_L{args.lattice_size}_beta{beta_tag}{config_suffix}.npy"
         if not data_path.exists():
             raise FileNotFoundError(f"Missing training data: {data_path}")
 

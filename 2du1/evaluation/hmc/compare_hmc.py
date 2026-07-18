@@ -44,6 +44,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rand_seed", type=int, default=1331)
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "gpu", "cuda"])
     parser.add_argument("--no_tune_step_size", action="store_true")
+    parser.add_argument("--output_tag", type=str, default=None)
     return parser.parse_args()
 
 
@@ -87,6 +88,7 @@ def main() -> None:
     print(f">>> HMC run completed in {run_time:.2f} seconds")
 
     beta_tag = format_beta(args.beta)
+    output_suffix = f"_{args.output_tag}" if args.output_tag else ""
     volume = args.lattice_size**2
     fig = hmc_summary(
         args.beta,
@@ -101,18 +103,27 @@ def main() -> None:
     )
     if fig is not None:
         fig.savefig(
-            plot_dir / f"comparison_hmc_L{args.lattice_size}_beta{beta_tag}_nsteps{args.n_steps}_{args.rand_seed}.pdf",
+            plot_dir
+            / f"comparison_hmc_L{args.lattice_size}_beta{beta_tag}_nsteps{args.n_steps}_{args.rand_seed}{output_suffix}.pdf",
             transparent=True,
         )
 
     np.savetxt(
-        dump_dir / f"topo_hmc_L{args.lattice_size}_beta{beta_tag}_nsteps{args.n_steps}_{args.rand_seed}.csv",
+        dump_dir
+        / f"topo_hmc_L{args.lattice_size}_beta{beta_tag}_nsteps{args.n_steps}_{args.rand_seed}{output_suffix}.csv",
         np.array(topo),
         fmt="%.6e",
     )
     np.savetxt(
-        dump_dir / f"accept_rate_hmc_L{args.lattice_size}_beta{beta_tag}_nsteps{args.n_steps}_{args.rand_seed}.csv",
+        dump_dir
+        / f"accept_rate_hmc_L{args.lattice_size}_beta{beta_tag}_nsteps{args.n_steps}_{args.rand_seed}{output_suffix}.csv",
         [acceptance_rate],
+        fmt="%.6e",
+    )
+    np.savetxt(
+        dump_dir
+        / f"step_size_hmc_L{args.lattice_size}_beta{beta_tag}_nsteps{args.n_steps}_{args.rand_seed}{output_suffix}.csv",
+        [hmc.dt],
         fmt="%.6e",
     )
     print(f">>> Total HMC time: {therm_time + run_time:.2f} seconds")

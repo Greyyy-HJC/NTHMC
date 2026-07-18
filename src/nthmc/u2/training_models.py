@@ -42,35 +42,15 @@ def _scale_coefficients(x: torch.Tensor, plaq_output_channels: int) -> tuple[tor
     return plaq_coeffs, rect_coeffs
 
 
-def _scale_split_coefficients(
-    plaq_logits: torch.Tensor,
-    rect_logits: torch.Tensor,
-    *,
-    plaq_cap: float | torch.Tensor = 1 / 5,
-    rect_cap: float | torch.Tensor = 1 / 40,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Squash split plaquette/rectangle logits with explicit caps."""
-    return torch.tanh(plaq_logits) * plaq_cap, torch.tanh(rect_logits) * rect_cap
-
-
 class _LayerScale(nn.Module):
-    """Per-channel ReZero gate applied to the pre-tanh logits.
+    """Zero-initialized per-channel gate applied to the pre-tanh logits."""
 
-    The learnable per-channel scale is initialized to zero, so every model starts as the
-    exact identity transform (the output coefficients are zero) while the convolutions keep
-    their healthy default initialization. Training ramps the gate up from zero. ``gain`` is a
-    fixed (non-learnable) multiplier that sets how quickly a given variant's gate effectively
-    grows; it defaults to 1. Because the gate scales the logits before the tanh heads, the
-    strict tanh caps (and thus reversibility) are untouched.
-    """
-
-    def __init__(self, channels: int, gain: float = 1.0) -> None:
+    def __init__(self, channels: int) -> None:
         super().__init__()
-        self.gain = gain
         self.scale = nn.Parameter(torch.zeros(channels, 1, 1))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.gain * self.scale * x
+        return self.scale * x
 
 
 class LocalNet(nn.Module):

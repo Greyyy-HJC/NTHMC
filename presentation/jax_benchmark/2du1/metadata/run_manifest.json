@@ -1,0 +1,55 @@
+{
+  "historical_commit": "e3847a90570f2434117177c80872c9306b69a93b",
+  "benchmark": "U(1) L32 beta4 full pipeline",
+  "current_source": "u1_jaxbench_20260714",
+  "lattice_size": 32,
+  "beta": 4.0,
+  "train_beta": 4.0,
+  "n_configs": 4096,
+  "n_thermalization": 10,
+  "n_steps": 10,
+  "step_size_selection": {
+    "target_acceptance": 0.65,
+    "eligible_acceptance_range": [
+      0.45,
+      0.85
+    ],
+    "selection": "independent closest probe for each implementation and sampler"
+  },
+  "rand_seed": 1029,
+  "tuned_jobs": {
+    "new_hmc": "165064.sophia-pbs-01.lab.alcf.anl.gov",
+    "new_fthmc": "165065.sophia-pbs-01.lab.alcf.anl.gov",
+    "old_hmc": "165066.sophia-pbs-01.lab.alcf.anl.gov",
+    "old_fthmc": "165067.sophia-pbs-01.lab.alcf.anl.gov"
+  },
+  "training_backend": "PyTorch",
+  "current_runtime_backend": "JAX",
+  "archive_policy": "final logs, final evaluation dumps, generated summaries, and checksums only",
+  "results": {
+    "old_hmc": {
+      "step_size": 0.28,
+      "acceptance": 0.7138672,
+      "mean_plaquette": 0.8637365130416583,
+      "topology_samples": 4096
+    },
+    "new_hmc": {
+      "step_size": 0.28,
+      "acceptance": 0.7224121,
+      "mean_plaquette": 0.8631193532637553,
+      "topology_samples": 4096
+    },
+    "old_fthmc": {
+      "step_size": 0.3,
+      "acceptance": 0.6762695,
+      "mean_plaquette": 0.863896633774857,
+      "topology_samples": 4096
+    },
+    "new_fthmc": {
+      "step_size": 0.3,
+      "acceptance": 0.7070312,
+      "mean_plaquette": 0.8637864043994341,
+      "topology_samples": 4096
+    }
+  }
+}

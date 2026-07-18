@@ -8,6 +8,7 @@ import jax
 import jax.numpy as jnp
 from tqdm import tqdm
 
+from nthmc.core.hmc_tuning import tune_step_size as tune_hmc_step_size
 from nthmc.u1.u1_observables import action, plaq_mean_from_field, regularize, topo_from_field
 
 Array = Any
@@ -135,10 +136,9 @@ class HMCU1FT:
 
     def _make_step(self):
         n_steps = self.n_steps
-        dt = self.dt
         lam = 0.1931833
 
-        def omelyan(theta: Array, pi: Array) -> tuple[Array, Array]:
+        def omelyan(theta: Array, pi: Array, dt: Array) -> tuple[Array, Array]:
             pi = pi - lam * dt * self.new_force(theta)
 
             def body(i: int, carry: tuple[Array, Array]) -> tuple[Array, Array]:
@@ -152,11 +152,11 @@ class HMCU1FT:
             theta, pi = jax.lax.fori_loop(0, n_steps, body, (theta, pi))
             return regularize(theta), pi - lam * dt * self.new_force(theta)
 
-        def step(theta: Array, key: Array) -> tuple[Array, Array, Array, Array]:
+        def step(theta: Array, key: Array, dt: Array) -> tuple[Array, Array, Array, Array]:
             key_pi, key_accept, key_next = jax.random.split(key, 3)
             pi = jax.random.normal(key_pi, theta.shape, dtype=theta.dtype)
             h_old = self.new_action(theta) + 0.5 * jnp.sum(pi**2)
-            theta_new, pi_new = omelyan(theta, pi)
+            theta_new, pi_new = omelyan(theta, pi, dt)
             h_new = self.new_action(theta_new) + 0.5 * jnp.sum(pi_new**2)
             accept_prob = jnp.minimum(1.0, jnp.exp(-(h_new - h_old)))
             accepted = jax.random.uniform(key_accept, (), dtype=theta.dtype) < accept_prob
@@ -164,13 +164,36 @@ class HMCU1FT:
 
         return jax.jit(step)
 
-    def metropolis_step(self, theta: Array) -> tuple[Array, bool, float]:
+    def _metropolis_step_at(self, theta: Array, step_size: float) -> tuple[Array, bool, float]:
         if self._compiled_step is None:
             self._compiled_step = self._make_step()
-        theta, self.key, accepted, h = self._compiled_step(theta, self.key)
+        dt = jnp.asarray(step_size, dtype=theta.dtype)
+        theta, self.key, accepted, h = self._compiled_step(theta, self.key, dt)
         return theta, bool(accepted), float(h)
 
-    def tune_step_size(self, **_: Any) -> None:
+    def metropolis_step(self, theta: Array) -> tuple[Array, bool, float]:
+        return self._metropolis_step_at(theta, self.dt)
+
+    def tune_step_size(
+        self,
+        *,
+        n_tune_steps: int = 1000,
+        target_rate: float = 0.70,
+        target_tolerance: float = 0.15,
+        max_attempts: int = 10,
+        theta: Array | None = None,
+    ) -> None:
+        theta = self.initialize() if theta is None else jnp.asarray(theta)
+        self.dt = tune_hmc_step_size(
+            theta,
+            self.dt,
+            self._metropolis_step_at,
+            n_tune_steps=n_tune_steps,
+            target_rate=target_rate,
+            target_tolerance=target_tolerance,
+            max_attempts=max_attempts,
+            description="Tuning FT step size",
+        )
         print(f">>> Using FT step size: {self.dt:.6f}")
 
     def thermalize(self, *, n_tune_steps: int = 1000) -> tuple[Array, list[float], float]:

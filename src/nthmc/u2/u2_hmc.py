@@ -8,6 +8,7 @@ import jax
 import jax.numpy as jnp
 from tqdm import tqdm
 
+from nthmc.core.hmc_tuning import tune_step_size as tune_hmc_step_size
 from nthmc.u2.u2_observables import (
     action_from_field,
     force_from_field,
@@ -60,35 +61,34 @@ class HMCU2:
     def _make_step(self):
         beta = self.beta
         n_steps = self.n_steps
-        dt = self.dt
         lam = 0.1931833
         force = jax.grad(lambda algebra, links: action_from_field(u2_mul(u2_exp(algebra), links), beta), argnums=0)
 
         def force_links(links: Array) -> Array:
             return force(jnp.zeros((*links.shape[:-1], 4), dtype=links.dtype), links)
 
-        def update(links: Array, momenta: Array, coefficient: float) -> Array:
+        def update(links: Array, momenta: Array, coefficient: float, dt: Array) -> Array:
             return u2_mul(u2_exp(coefficient * dt * momenta), links)
 
-        def omelyan(links: Array, momenta: Array) -> tuple[Array, Array]:
+        def omelyan(links: Array, momenta: Array, dt: Array) -> tuple[Array, Array]:
             momenta = momenta - lam * dt * force_links(links)
 
             def body(i: int, carry: tuple[Array, Array]) -> tuple[Array, Array]:
                 links_i, mom_i = carry
-                links_i = update(links_i, mom_i, 0.5)
+                links_i = update(links_i, mom_i, 0.5, dt)
                 mom_i = mom_i - (1 - 2 * lam) * dt * force_links(links_i)
-                links_i = update(links_i, mom_i, 0.5)
+                links_i = update(links_i, mom_i, 0.5, dt)
                 mom_i = jax.lax.cond(i != n_steps - 1, lambda p: p - 2 * lam * dt * force_links(links_i), lambda p: p, mom_i)
                 return links_i, mom_i
 
             links, momenta = jax.lax.fori_loop(0, n_steps, body, (links, momenta))
             return u2_normalize(links), momenta - lam * dt * force_links(links)
 
-        def step(links: Array, key: Array) -> tuple[Array, Array, Array, Array]:
+        def step(links: Array, key: Array, dt: Array) -> tuple[Array, Array, Array, Array]:
             key_p, key_accept, key_next = jax.random.split(key, 3)
             momenta = jax.random.normal(key_p, (*links.shape[:-1], 4), dtype=links.dtype)
             h_old = action_from_field(links, beta) + 0.5 * jnp.sum(momenta**2)
-            new_links, new_momenta = omelyan(links, momenta)
+            new_links, new_momenta = omelyan(links, momenta, dt)
             h_new = action_from_field(new_links, beta) + 0.5 * jnp.sum(new_momenta**2)
             accept_prob = jnp.minimum(1.0, jnp.exp(-(h_new - h_old)))
             accepted = jax.random.uniform(key_accept, (), dtype=links.dtype) < accept_prob
@@ -96,13 +96,35 @@ class HMCU2:
 
         return jax.jit(step)
 
-    def metropolis_step(self, links: Array) -> tuple[Array, bool, float]:
+    def _metropolis_step_at(self, links: Array, step_size: float) -> tuple[Array, bool, float]:
         if self._compiled_step is None:
             self._compiled_step = self._make_step()
-        links, self.key, accepted, h = self._compiled_step(links, self.key)
+        dt = jnp.asarray(step_size, dtype=links.dtype)
+        links, self.key, accepted, h = self._compiled_step(links, self.key, dt)
         return links, bool(accepted), float(h)
 
-    def tune_step_size(self, **_: Any) -> None:
+    def metropolis_step(self, links: Array) -> tuple[Array, bool, float]:
+        return self._metropolis_step_at(links, self.dt)
+
+    def tune_step_size(
+        self,
+        *,
+        n_tune_steps: int = 2000,
+        target_rate: float = 0.70,
+        target_tolerance: float = 0.15,
+        max_attempts: int = 10,
+        links: Array | None = None,
+    ) -> None:
+        links = self.initialize() if links is None else jnp.asarray(links)
+        self.dt = tune_hmc_step_size(
+            links,
+            self.dt,
+            self._metropolis_step_at,
+            n_tune_steps=n_tune_steps,
+            target_rate=target_rate,
+            target_tolerance=target_tolerance,
+            max_attempts=max_attempts,
+        )
         print(f">>> Using step size: {self.dt:.6f}")
 
     def thermalize(self, *, n_tune_steps: int = 2000) -> tuple[Array, list[float], float]:

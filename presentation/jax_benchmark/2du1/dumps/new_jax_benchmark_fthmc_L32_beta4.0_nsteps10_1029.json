@@ -1,0 +1,23 @@
+{
+  "acceptance_rate": 0.70703125,
+  "backend": "jax",
+  "beta": 4.0,
+  "device": "gpu",
+  "ft_step_size": 0.3,
+  "lattice_size": 32,
+  "model_load_time_sec": 0.1429915428161621,
+  "model_tag": "base",
+  "n_configs": 4096,
+  "n_steps": 10,
+  "n_thermalization": 10,
+  "plaq_mean": 0.8637864043994341,
+  "rand_seed": 1029,
+  "run_time_sec": 1964.5181283950806,
+  "save_tag": "base_u1_jaxbench_20260714_train_b4.0_L32_1029",
+  "therm_acceptance_rate": 0.8,
+  "thermalization_time_sec": 24.953935146331787,
+  "topo_mean": -0.134521484375,
+  "topo_std": 2.945006974459746,
+  "total_time_sec": 1989.6150550842285,
+  "train_beta": 4.0
+}

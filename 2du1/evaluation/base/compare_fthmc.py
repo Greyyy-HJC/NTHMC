@@ -102,6 +102,7 @@ def main() -> None:
         tune_step_size=not args.no_tune_step_size,
         seed=args.rand_seed,
     )
+    print(f">>> Step-size mode: {'fixed' if args.no_tune_step_size else 'automatic tuning'}")
 
     therm_start = time.time()
     theta_thermalized, therm_plaq, therm_acceptance_rate = hmc.thermalize(n_tune_steps=args.n_tune_steps)
@@ -142,6 +143,16 @@ def main() -> None:
         [acceptance_rate],
         fmt="%.6e",
     )
+    np.savetxt(
+        dump_dir / f"step_size_fthmc_L{args.lattice_size}_beta{beta_tag}_nsteps{args.n_steps}_{args.save_tag}.csv",
+        [hmc.dt],
+        fmt="%.6e",
+    )
+    if args.no_tune_step_size and not 0.55 <= acceptance_rate <= 0.85:
+        print(
+            f">>> WARNING: fixed-step FT-HMC acceptance {acceptance_rate:.4f} "
+            "is outside the production range [0.55, 0.85]"
+        )
     benchmark = {
         "backend": "jax",
         "lattice_size": args.lattice_size,
@@ -150,7 +161,9 @@ def main() -> None:
         "n_thermalization": args.n_thermalization,
         "n_configs": args.n_configs,
         "n_steps": args.n_steps,
-        "ft_step_size": args.ft_step_size,
+        "initial_ft_step_size": args.ft_step_size,
+        "ft_step_size": hmc.dt,
+        "step_size_tuned": not args.no_tune_step_size,
         "rand_seed": args.rand_seed,
         "model_tag": args.model_tag,
         "save_tag": args.save_tag,

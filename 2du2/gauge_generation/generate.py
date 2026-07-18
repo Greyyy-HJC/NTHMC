@@ -44,6 +44,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "gpu", "cuda"])
     parser.add_argument("--no_tune_step_size", action="store_true")
     parser.add_argument("--max_lag", type=int, default=20)
+    parser.add_argument("--output_tag", type=str, default=None)
     return parser.parse_args()
 
 
@@ -88,6 +89,7 @@ def main() -> None:
     )
 
     beta_tag = format_beta(args.beta)
+    output_suffix = f"_{args.output_tag}" if args.output_tag else ""
     volume = args.lattice_size**2
     fig = hmc_summary(
         args.max_lag,
@@ -101,12 +103,27 @@ def main() -> None:
         acceptance_rate,
     )
     if fig is not None:
-        fig.savefig(plot_dir / f"gauge_gen_hmc_L{args.lattice_size}_beta{beta_tag}.pdf", transparent=True)
+        fig.savefig(
+            plot_dir / f"gauge_gen_hmc_L{args.lattice_size}_beta{beta_tag}{output_suffix}.pdf",
+            transparent=True,
+        )
 
-    np.save(gauge_dir / f"links_L{args.lattice_size}_beta{beta_tag}.npy", np.asarray(u2_to_matrix(np.asarray(configs))))
-    np.savetxt(dump_dir / f"plaq_L{args.lattice_size}_beta{beta_tag}.csv", np.array(plaq), fmt="%.6e")
-    np.savetxt(dump_dir / f"topo_L{args.lattice_size}_beta{beta_tag}.csv", np.array(topo), fmt="%.6e")
-    np.savetxt(dump_dir / f"accept_rate_L{args.lattice_size}_beta{beta_tag}.csv", [acceptance_rate], fmt="%.6e")
+    np.save(
+        gauge_dir / f"links_L{args.lattice_size}_beta{beta_tag}{output_suffix}.npy",
+        np.asarray(u2_to_matrix(np.asarray(configs))),
+    )
+    np.savetxt(dump_dir / f"plaq_L{args.lattice_size}_beta{beta_tag}{output_suffix}.csv", np.array(plaq), fmt="%.6e")
+    np.savetxt(dump_dir / f"topo_L{args.lattice_size}_beta{beta_tag}{output_suffix}.csv", np.array(topo), fmt="%.6e")
+    np.savetxt(
+        dump_dir / f"accept_rate_L{args.lattice_size}_beta{beta_tag}{output_suffix}.csv",
+        [acceptance_rate],
+        fmt="%.6e",
+    )
+    np.savetxt(
+        dump_dir / f"step_size_L{args.lattice_size}_beta{beta_tag}{output_suffix}.csv",
+        [hmc.dt],
+        fmt="%.6e",
+    )
     print(">>> Gauge generation completed")
 
 

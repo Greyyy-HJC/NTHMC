@@ -46,6 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rand_seed", type=int, default=1331)
     parser.add_argument("--model_tag", type=str, default="base")
     parser.add_argument("--save_tag", type=str, required=True)
+    parser.add_argument("--output_dir", type=Path, default=None)
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "gpu", "cuda"])
     parser.add_argument("--no_tune_step_size", action="store_true")
     return parser.parse_args()
@@ -59,8 +60,9 @@ def main() -> None:
     script_dir = Path(__file__).resolve().parent
     domain_root = script_dir.parents[1]
     model_dir = domain_root / "artifacts" / "models"
-    plot_dir = script_dir / "plots"
-    dump_dir = script_dir / "dumps"
+    output_dir = args.output_dir.resolve() if args.output_dir is not None else script_dir
+    plot_dir = output_dir / "plots"
+    dump_dir = output_dir / "dumps"
     for directory in (plot_dir, dump_dir):
         directory.mkdir(parents=True, exist_ok=True)
 
@@ -101,6 +103,7 @@ def main() -> None:
         tune_step_size=not args.no_tune_step_size,
         seed=args.rand_seed,
     )
+    print(f">>> Step-size mode: {'fixed' if args.no_tune_step_size else 'automatic tuning'}")
 
     therm_start = time.time()
     links_thermalized, therm_plaq, therm_acceptance_rate = hmc.thermalize(n_tune_steps=args.n_tune_steps)
@@ -141,6 +144,16 @@ def main() -> None:
         [acceptance_rate],
         fmt="%.6e",
     )
+    np.savetxt(
+        dump_dir / f"step_size_fthmc_L{args.lattice_size}_beta{beta_tag}_nsteps{args.n_steps}_{args.save_tag}.csv",
+        [hmc.dt],
+        fmt="%.6e",
+    )
+    if args.no_tune_step_size and not 0.55 <= acceptance_rate <= 0.85:
+        print(
+            f">>> WARNING: fixed-step FT-HMC acceptance {acceptance_rate:.4f} "
+            "is outside the production range [0.55, 0.85]"
+        )
     print(f">>> Total FT-HMC time: {model_load_time + therm_time + run_time:.2f} seconds")
 
 

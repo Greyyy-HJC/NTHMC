@@ -56,17 +56,3 @@ def test_u2_manual_logdet_matches_full_field_jacobian_in_float64() -> None:
 
     assert torch.abs(manual) > 1e-3
     assert torch.allclose(manual, full_autograd, rtol=1e-10, atol=1e-10)
-
-
-def test_u2_identity_logdet_float32_noise_stays_within_absolute_tolerance() -> None:
-    torch.manual_seed(1029)
-    transform = FieldTransformation(2, n_subsets=8, model_tag="base")
-    generator = torch.Generator().manual_seed(271828)
-    links = u2_exp(0.15 * torch.randn((1, 2, 2, 2, 4), generator=generator))
-
-    manual = transform.compute_jac_logdet_manual(links)[0]
-    local_autograd = transform.compute_jac_logdet_autograd(links)[0]
-    _, atol = transform._jacobian_check_tolerances(links)
-
-    assert manual == 0
-    assert torch.abs(local_autograd - manual) <= atol

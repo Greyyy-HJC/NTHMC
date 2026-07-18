@@ -2,6 +2,28 @@
 
 This is an append-only development history for NTHMC.
 
+## 2026-07-18
+
+- Centralized all U(1)/U(2) PBS experiment settings at the top of symmetric gauge, training, HMC, and FT-HMC generators. Script names, log paths, ensemble/checkpoint paths, and save tags now derive from those settings; FT-HMC names distinguish training and evaluation beta, and gauge generation now uses the same generate-or-submit workflow.
+- Added symmetric L16 PBS production workflows for U(1) beta 3 and U(2) beta 10: 4096-configuration gauge ensembles, eight 16-epoch base-model training jobs, and matching 2048-sample HMC/FT-HMC evaluations. Restored real dynamic-JAX HMC step-size tuning at target acceptance 0.70 while keeping production FT-HMC on fixed step sizes, and aligned Git synchronization rules with `origin/main`.
+- Reduced `2du1` and `2du2` to symmetric source-oriented workflow skeletons: JAX gauge generation/HMC/FT-HMC evaluation, PyTorch training, canonical `evaluation/base`, and empty generated-output directories.
+- Removed historical configs, checkpoints, dumps, plots, per-job/PBS scripts, non-base evaluation workspaces, and obsolete root initialization/specification documents while retaining the `model_tag`/`choose_model` extension surface with `base` as the only registered model.
+- Consolidated the final U(1) and U(2) historical-vs-current full-pipeline evidence under `presentation/jax_benchmark`, including raw final logs/dumps, manifests, checksums, reproducible summarizers, per-stage estimates, and sequential pipeline totals.
+- Trimmed the default CPU test suite to focused runtime/training/checkpoint/model-registry coverage and documented the unmatched 0.0544 acceptance of the archived U(2) JAX HMC timing.
+
+## 2026-07-14
+
+- Added an isolated `2du2` L32 beta10 benchmark pipeline tagged `jaxbench_20260714`, with tagged gauge/HMC outputs, tagged training input selection, dedicated PBS submission scripts, and a timing-summary generator under `2du2/artifacts/benchmarks/jaxbench_20260714`.
+- Installed missing `jax[cuda12]` into the repository `.venv` so the JAX gauge generation, standard HMC, and FT-HMC entrypoints can run from the project environment.
+- Kept the benchmark comparison explicit that model training remains PyTorch, while JAX acceleration applies to gauge generation and evaluation runtimes.
+- Added a matching `2du1` L32 beta4 benchmark pipeline tagged `u1_jaxbench_20260714`, with temporary tagged gauge/HMC output and training input selection, ignored local PBS scripts, and a summary generator under `2du1/artifacts/benchmarks/u1_jaxbench_20260714`.
+- Restored `--batch_size` as the per-rank U(1)/U(2) training batch size while retaining fixed masked global batches and sample-weighted DDP loss; training now logs the per-rank/global sizes and steps per epoch.
+- Kept the exact-identity zero output gate but restored healthy PyTorch default convolution initialization for both training systems, replacing the post-JAX `N(0, 0.001)` convolution reset.
+- Verified `.venv` JAX 0.4.30 on an A100 with PBS probe 165031, then replaced the incorrect benchmark chains with U(2) jobs `165032 -> {165033, 165034}` and U(1) jobs `165035 -> {165036, 165037}`; the tagged U(1)/U(2) gauge ensembles were retained.
+- Added the missing U(1) L32 beta4 historical evaluation baseline from commit `e3847a9`: archived the compatible epoch-32 checkpoint and current/historical pipeline logs under `presentation/jax_benchmark/2du1`, and submitted old PyTorch HMC job 165057 plus cold-cache compiled-force FT-HMC job 165058 (with explicit eager fallback).
+- Replaced the low-acceptance U(1) fixed-step evaluation plan: cancelled unstarted old jobs 165057/165058, submitted independent new-JAX/old-PyTorch step-size probes 165059/165061 targeting acceptance 0.65, and queued tuned 4096-config jobs `{165064, 165065}`/`{165066, 165067}` behind those probes. The original low-acceptance JAX outputs remain archived with an `untuned_` prefix.
+- Added finalizer job 165068 after all four tuned U(1) evaluations; it requires acceptance in `[0.4, 0.9]`, 4096 finite topology samples per run, refreshes the timing/physics summary and checksums, and removes the temporary `e3847a9` worktree only after validation succeeds.
+
 ## 2026-07-13
 
 - Removed the separate `src/nthmc/training` package and made PyTorch the sole training implementation under `nthmc.core`, `nthmc.u1`, and `nthmc.u2`; the JAX field transforms are now runtime-only for evaluation and HMC, and Optax is no longer a project dependency.

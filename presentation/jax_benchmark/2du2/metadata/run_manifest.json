@@ -1,0 +1,17 @@
+{
+  "benchmark": "U(2) L32 beta10 full pipeline",
+  "historical_source": "pre-JAX PyTorch L32 logs archived from the repository; exact commit was not recorded",
+  "current_source": "jaxbench_20260714",
+  "lattice_size": 32,
+  "beta": 10.0,
+  "train_beta": 10.0,
+  "n_configs": 4096,
+  "n_thermalization": 10,
+  "n_steps": 10,
+  "rand_seed": 1029,
+  "hmc_step_size": 0.2,
+  "fthmc_step_size": 0.08,
+  "training_backend": "PyTorch",
+  "current_runtime_backend": "JAX",
+  "archive_policy": "final logs, final evaluation dumps, generated summaries, and checksums only"
+}

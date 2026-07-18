@@ -35,11 +35,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--n_subsets", type=int, default=8)
     parser.add_argument("--model_tag", type=str, default="base")
     parser.add_argument("--save_tag", type=str, default=None)
+    parser.add_argument("--config_tag", type=str, default=None)
     parser.add_argument("--rand_seed", type=int, default=1331)
     parser.add_argument("--if_check_jac", action="store_true")
     parser.add_argument("--lr", type=float, default=None)
     parser.add_argument("--weight_decay", type=float, default=None)
-    parser.add_argument("--init_std", type=float, default=None)
     parser.add_argument("--max_grad_norm", type=float, default=None)
     parser.add_argument("--plateau_factor", type=float, default=None)
     parser.add_argument("--plateau_patience", type=int, default=None)
@@ -78,8 +78,6 @@ def main() -> None:
         hyperparams["lr"] = args.lr
     if args.weight_decay is not None:
         hyperparams["weight_decay"] = args.weight_decay
-    if args.init_std is not None:
-        hyperparams["init_std"] = args.init_std
     if args.max_grad_norm is not None:
         hyperparams["max_grad_norm"] = args.max_grad_norm
     if args.plateau_factor is not None:
@@ -125,7 +123,8 @@ def main() -> None:
     for train_beta in beta_values(args.min_beta, args.max_beta, args.beta_gap):
         beta_start = time.time()
         beta_tag = format_beta(train_beta)
-        data_path = gauge_dir / f"theta_L{args.lattice_size}_beta{beta_tag}.npy"
+        config_suffix = f"_{args.config_tag}" if args.config_tag else ""
+        data_path = gauge_dir / f"theta_L{args.lattice_size}_beta{beta_tag}{config_suffix}.npy"
         if not data_path.exists():
             raise FileNotFoundError(f"Missing training data: {data_path}")
 

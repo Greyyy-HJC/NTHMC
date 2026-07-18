@@ -17,7 +17,7 @@ import torch.nn as nn
 from torch.utils.checkpoint import checkpoint
 from tqdm import tqdm
 
-from nthmc.core.training import fixed_batches, local_batch, load_jax_npz, save_jax_npz, unwrap_model
+from nthmc.core.training import global_batch_size, fixed_batches, local_batch, load_jax_npz, save_jax_npz, unwrap_model
 from nthmc.u2.training_diagnostics import maybe_log_training_diagnostics
 from nthmc.u2.training_models import choose_model
 from nthmc.u2.training_observables import (
@@ -81,7 +81,6 @@ class FieldTransformation:
         self.compile_enabled = compile_enabled
 
         self.hyperparams = {
-            "init_std": 0.001,
             "lr": 0.0001,
             "weight_decay": 1e-5,
             "factor": 0.5,
@@ -98,14 +97,6 @@ class FieldTransformation:
 
         model_cls = choose_model(model_tag)
         raw_models = nn.ModuleList([model_cls().to(self.device) for _ in range(n_subsets)])
-        for model in raw_models:
-            if not hasattr(model, "conv_input") or not hasattr(model, "conv_output") or not hasattr(model, "out_scale"):
-                continue
-            nn.init.normal_(model.conv_input.weight, mean=0.0, std=self.hyperparams["init_std"])
-            nn.init.normal_(model.conv_input.bias, mean=0.0, std=self.hyperparams["init_std"])
-            nn.init.normal_(model.conv_output.weight, mean=0.0, std=self.hyperparams["init_std"])
-            nn.init.normal_(model.conv_output.bias, mean=0.0, std=self.hyperparams["init_std"])
-            model.out_scale.scale.data.zero_()
 
         raw_optimizer = torch.optim.AdamW(
             raw_models.parameters(), lr=self.hyperparams["lr"], weight_decay=self.hyperparams["weight_decay"]
@@ -1074,8 +1065,12 @@ class FieldTransformation:
         self.train_beta = train_beta
         rank = int(self.fabric.global_rank) if self.fabric is not None else 0
         world_size = int(self.fabric.world_size) if self.fabric is not None else 1
-        if batch_size % world_size:
-            raise ValueError(f"global batch size {batch_size} must be divisible by world_size={world_size}")
+        distributed_batch_size = global_batch_size(batch_size, world_size)
+        train_steps = (len(train_data) + distributed_batch_size - 1) // distributed_batch_size
+        self.print(
+            f"Training batches: per_rank={batch_size}, global={distributed_batch_size}, "
+            f"steps_per_epoch={train_steps}"
+        )
 
         train_losses: list[float] = []
         test_losses: list[float] = []
@@ -1089,7 +1084,7 @@ class FieldTransformation:
             self._set_models_mode(True)
             epoch_losses = []
             grad_norms = []
-            for batch, mask in fixed_batches(train_data, batch_size, shuffle=True, seed=epoch):
+            for batch, mask in fixed_batches(train_data, distributed_batch_size, shuffle=True, seed=epoch):
                 local, local_mask = local_batch(batch, mask, rank=rank, world_size=world_size)
                 batch_loss, valid_count, grad_norm = self.train_step(local, local_mask)
                 epoch_losses.append((batch_loss, valid_count))
@@ -1100,7 +1095,7 @@ class FieldTransformation:
 
             self._set_models_mode(False)
             test_epoch_losses = []
-            for batch, mask in fixed_batches(test_data, batch_size, shuffle=False, seed=0):
+            for batch, mask in fixed_batches(test_data, distributed_batch_size, shuffle=False, seed=0):
                 local, local_mask = local_batch(batch, mask, rank=rank, world_size=world_size)
                 test_epoch_losses.append(self.evaluate_step(local, local_mask))
             test_loss = self._global_weighted_epoch_loss(test_epoch_losses)

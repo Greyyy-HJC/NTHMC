@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Union
 
 import jax
 import jax.numpy as jnp
@@ -32,7 +32,8 @@ from nthmc.u2.u2_observables import (
 
 Array = Any
 Params = dict[str, Any]
-LoopToken = tuple[int, int | tuple[int, int] | None, int | tuple[int, int] | None, bool]
+LoopAxis = Union[int, tuple[int, int], None]
+LoopToken = tuple[int, LoopAxis, LoopAxis, bool]
 
 
 class FieldTransformation:

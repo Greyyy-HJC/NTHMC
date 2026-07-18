@@ -1,0 +1,19 @@
+section,metric,old_pytorch_seconds,new_seconds,old_over_new_speedup,timing_basis
+detail,gauge_pbs,21157.00,495.00,42.741,raw log metric
+detail,training_pbs,25989.00,21991.00,1.182,raw log metric
+detail,training_reported_total,25894.00,21882.00,1.183,raw log metric
+detail,training_per_step,23.45,19.82,1.183,raw log metric
+detail,hmc_thermalization,674.35,12.69,53.140,raw log metric
+detail,hmc_run,822.17,165.43,4.970,raw log metric
+detail,hmc_reported_total,1496.52,178.12,8.402,raw log metric
+detail,hmc_pbs,pending,206.00,pending,raw log metric
+detail,fthmc_model_load,0.26,0.11,2.364,raw log metric
+detail,fthmc_thermalization_compile,7268.34,1583.69,4.589,raw log metric
+detail,fthmc_run,59839.82,22676.22,2.639,raw log metric
+detail,fthmc_reported_total,67108.41,24260.02,2.766,raw log metric
+detail,fthmc_pbs,67182.00,24589.00,2.732,raw log metric
+stage_total,gauge generation,21157.00,495.00,42.741,single-job PBS walltime
+stage_total,model training,25894.00,21882.00,1.183,single-seed reported elapsed
+stage_total,HMC evaluation,1496.52,178.12,8.402,reported sampler total
+stage_total,FT-HMC evaluation,67108.41,24260.02,2.766,reported sampler total
+pipeline_total,sequential one-seed pipeline,115655.93,46815.14,2.470,sum of stage totals

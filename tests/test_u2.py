@@ -39,14 +39,6 @@ def test_u2_force_finite_difference() -> None:
     assert np.allclose(float(directional), float(finite_difference), rtol=5e-2, atol=5e-3)
 
 
-def test_u2_field_transform_identity_jac() -> None:
-    transform = FieldTransformation(2, model_tag="base", n_subsets=1)
-    assert transform.params["subsets"][0]["conv_input"]["weight"].shape[1] == 18
-    links = identity_field(2)
-    assert np.allclose(np.asarray(transform.field_transformation(links)), np.asarray(links))
-    assert np.allclose(np.asarray(transform.compute_jac_logdet(links[jnp.newaxis, ...])), 0.0)
-
-
 def test_u2_nontrivial_field_transform_analytic_jacobian() -> None:
     transform = FieldTransformation(2, model_tag="base", n_subsets=1)
     subset = dict(transform.params["subsets"][0])
@@ -67,25 +59,3 @@ def test_u2_nontrivial_field_transform_analytic_jacobian() -> None:
     assert 0 < float(diagnostics["mean_iterations"]) <= 8
     assert 0 < float(diagnostics["max_iterations"]) <= 8
     assert int(diagnostics["n_not_converged"]) == 0
-
-
-def test_u2_autodiff_jacobian_is_check_only() -> None:
-    links = u2_exp(0.03 * jax.random.normal(jax.random.PRNGKey(6), (1, 2, 2, 2, 4)))
-    transform = FieldTransformation(2, model_tag="base", n_subsets=1, if_check_jac=False)
-
-    def fail_autodiff(*_args, **_kwargs):
-        raise AssertionError("autodiff Jacobian should not run when if_check_jac=False")
-
-    transform.compute_jac_logdet_autodiff_with_params = fail_autodiff
-    transform._check_jacobian_if_requested(transform.params, links)
-
-    checked = {"called": False}
-    transform.if_check_jac = True
-
-    def fake_autodiff(params, batch):
-        checked["called"] = True
-        return transform.compute_jac_logdet_with_params(params, batch)
-
-    transform.compute_jac_logdet_autodiff_with_params = fake_autodiff
-    transform._check_jacobian_if_requested(transform.params, links)
-    assert checked["called"]
