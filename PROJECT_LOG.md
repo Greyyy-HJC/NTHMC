@@ -2,6 +2,13 @@
 
 This is an append-only development history for NTHMC.
 
+## 2026-07-19
+
+- Pointed `presentation/2du1_scaling.ipynb` at the finished U(1) L16 beta-3.0 base evaluations (eight seeds) and aligned FT-HMC save tags with `base_train_b...` naming.
+- Pointed `presentation/2du2_scaling.ipynb` at the finished U(2) L16 beta-10.0 HMC/FT-HMC seed overlap (five seeds); higher-beta FT-HMC dumps still lack matching HMC counterparts.
+- Extended U(2) base FT-HMC production generation to the beta 10, 12, 14, and 16 evaluation grid while reusing the beta-10 base checkpoints, fixed step size 0.10, and model-aware derived job/log names.
+- Reduced U(2) FT-HMC JAX GPU preallocation to 60% and disabled CUDA command buffers after L16 production evaluations continued to exhaust A100 memory while instantiating CUDA graphs; failed seeds are resubmitted without changing the physics parameters.
+
 ## 2026-07-18
 
 - Centralized all U(1)/U(2) PBS experiment settings at the top of symmetric gauge, training, HMC, and FT-HMC generators. Script names, log paths, ensemble/checkpoint paths, and save tags now derive from those settings; FT-HMC names distinguish training and evaluation beta, and gauge generation now uses the same generate-or-submit workflow.
