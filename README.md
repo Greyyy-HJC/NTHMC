@@ -82,11 +82,12 @@ Standard HMC uses `evaluation/hmc/compare_hmc.py`. The symmetric scaling drivers
 
 ## L16 PBS Production
 
-The `2du1` production point is `L=16, beta=3.0`; `2du2` uses `L=16, beta=10.0`.
-Gauge generation produces 4096 configurations, and eight training seeds feed matching
-2048-sample HMC and FT-HMC evaluations. Gauge generation and standard HMC tune their
-step sizes automatically toward acceptance 0.70. FT-HMC uses fixed step sizes (`0.35`
-for U(1), `0.10` for U(2)) because transformed-force tuning is expensive.
+The `2du1` production point is `L=16, beta=3.0`; `2du2` trains at `L=16, beta=10.0`
+and evaluates at beta 10, 12, 14, and 16. Gauge generation produces 4096 configurations,
+and eight training seeds feed matching 2048-sample HMC and FT-HMC evaluations. Gauge
+generation and standard HMC tune their step sizes automatically toward acceptance 0.70.
+FT-HMC uses fixed step sizes (`0.35` for U(1), `0.10` for U(2)) because transformed-force
+tuning is expensive.
 
 Each `gen_sub.sh` starts with one experiment-settings block. Change values there; command
 arguments, checkpoint/save tags, generated script names, and log paths are derived from
@@ -100,9 +101,9 @@ Submit stages manually in this order:
 3. Run `evaluation/hmc/gen_sub.sh` independently.
 4. After all checkpoints exist, run `evaluation/base/gen_sub.sh`.
 
-Gauge generation produces one job; the other generators submit eight seed jobs by
-default. Set `GENERATE_ONLY=1` to inspect the generated `scripts/sub_*.sh` files without
-calling `qsub`.
+Gauge generation produces one job; the other generators submit one job per configured
+seed and evaluation beta. Set `GENERATE_ONLY=1` to inspect the generated
+`scripts/sub_*.sh` files without calling `qsub`.
 
 ## Models and Checkpoints
 

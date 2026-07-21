@@ -2,6 +2,15 @@
 
 This is an append-only development history for NTHMC.
 
+## 2026-07-21
+
+- Rebased `presentation/docs/optimization_plan.md` onto the finished U(2) L16 train-β=10 `base` production baseline and `2du2_scaling.ipynb` metrics (Torch train / JAX eval paths, dual `choose_model` registries, Phase 0–1 marked done; β=12 HMC seed 2008 still provisional).
+- Completed validation of the 32-run U(2) base FT-HMC beta/seed grid, restored its PBS generator to one GPU per job, and extended and submitted the missing standard HMC runs for the matching beta 10, 12, 14, and 16 grid required by the scaling notebook.
+
+## 2026-07-20
+
+- Retried the four incomplete U(2) L16 base FT-HMC evaluations with all four GPUs reserved per node, execution restricted to one visible GPU, on-demand JAX GPU allocation, and CUDA command buffers disabled after the prior jobs encountered GPUs already occupied by unrelated Python processes.
+
 ## 2026-07-19
 
 - Pointed `presentation/2du1_scaling.ipynb` at the finished U(1) L16 beta-3.0 base evaluations (eight seeds) and aligned FT-HMC save tags with `base_train_b...` naming.

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Experiment settings. Keep beta in canonical float form because it is also
-# used in generated filenames.
+# Experiment settings. Keep beta values in canonical float form because they
+# are also used in generated filenames.
 lattice_size=16
-evaluate_beta="10.0"
+evaluate_betas=("10.0" "12.0" "14.0" "16.0")
 n_configs=2048
 n_thermalization=200
 n_steps=10
@@ -26,13 +26,15 @@ esac
 mkdir -p "${SCRIPT_DIR}/scripts" "${SCRIPT_DIR}/logs"
 generated_scripts=()
 
-for seed in "${seeds[@]}"; do
-    script_path="${SCRIPT_DIR}/scripts/sub_hmc_L${lattice_size}_b${evaluate_beta}_${seed}.sh"
-    generated_scripts+=("${script_path}")
-    cat > "${script_path}" <<EOF
+for evaluate_beta in "${evaluate_betas[@]}"; do
+    job_beta="${evaluate_beta%%.*}"
+    for seed in "${seeds[@]}"; do
+        script_path="${SCRIPT_DIR}/scripts/sub_hmc_L${lattice_size}_b${evaluate_beta}_${seed}.sh"
+        generated_scripts+=("${script_path}")
+        cat > "${script_path}" <<EOF
 #!/bin/bash -l
 
-#PBS -N u2_h${lattice_size}_${seed}
+#PBS -N u2_h${lattice_size}b${job_beta}_${seed}
 #PBS -A fthmc
 #PBS -l select=1:ngpus=1
 #PBS -l filesystems=home:eagle
@@ -64,7 +66,8 @@ ${tune_flag_line}    --device cuda
 
 date '+End time: %Y-%m-%d %H:%M:%S'
 EOF
-    chmod +x "${script_path}"
+        chmod +x "${script_path}"
+    done
 done
 
 printf 'Generated %d U(2) HMC scripts in %s\n' "${#generated_scripts[@]}" "${SCRIPT_DIR}/scripts"

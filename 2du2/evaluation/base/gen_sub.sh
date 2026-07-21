@@ -71,7 +71,7 @@ nvidia-smi
 nvcc --version
 date '+Start time: %Y-%m-%d %H:%M:%S'
 export PYTHONPATH=${REPO_ROOT}/src:${REPO_ROOT}
-export XLA_PYTHON_CLIENT_MEM_FRACTION=0.60
+export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XLA_FLAGS="--xla_gpu_enable_command_buffer="
 
 ${REPO_ROOT}/.venv/bin/python compare_fthmc.py \\
