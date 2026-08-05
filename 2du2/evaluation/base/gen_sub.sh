@@ -3,18 +3,19 @@ set -euo pipefail
 
 # Experiment settings. Keep beta values in canonical float form because they
 # are also used in checkpoint, script, and log filenames.
-lattice_size=16
-model_tag="base"
-train_beta="10.0"
-evaluate_betas=("10.0" "12.0" "14.0" "16.0")
-n_configs=2048
-n_thermalization=200
-n_steps=10
-ft_step_size="0.10"
-n_tune_steps=1000
-max_lag=64
-seeds=(1029 1107 1331 1984 1999 2008 2017 2025)
-tune_step_size=false
+lattice_size="${LATTICE_SIZE:-16}"
+model_tag="${MODEL_TAG:-base}"
+train_beta="${TRAIN_BETA:-10.0}"
+n_configs="${N_CONFIGS:-2048}"
+n_thermalization="${N_THERMALIZATION:-200}"
+n_steps="${N_STEPS:-10}"
+ft_step_size="${FT_STEP_SIZE:-0.10}"
+n_tune_steps="${N_TUNE_STEPS:-1000}"
+max_lag="${MAX_LAG:-64}"
+tune_step_size="${TUNE_STEP_SIZE:-false}"
+walltime="${WALLTIME:-06:00:00}"
+read -r -a evaluate_betas <<< "${EVALUATE_BETAS:-10.0 12.0 14.0 16.0}"
+read -r -a seeds <<< "${SEEDS:-1029 1107 1331 1984 1999 2008 2017 2025}"
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd -- "${SCRIPT_DIR}/../../.." && pwd)
@@ -60,7 +61,7 @@ for evaluate_beta in "${evaluate_betas[@]}"; do
 #PBS -l filesystems=home:eagle
 #PBS -q by-gpu
 #PBS -j oe
-#PBS -l walltime=06:00:00
+#PBS -l walltime=${walltime}
 #PBS -o ${SCRIPT_DIR}/logs/fthmc_${run_tag}.log
 
 set -euo pipefail
@@ -71,6 +72,10 @@ nvidia-smi
 nvcc --version
 date '+Start time: %Y-%m-%d %H:%M:%S'
 export PYTHONPATH=${REPO_ROOT}/src:${REPO_ROOT}
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XLA_FLAGS="--xla_gpu_enable_command_buffer="
 

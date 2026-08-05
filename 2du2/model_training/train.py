@@ -30,7 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_beta", type=float, required=True)
     parser.add_argument("--beta_gap", type=float, required=True)
     parser.add_argument("--continue_beta", type=float, default=None)
-    parser.add_argument("--n_epochs", type=int, default=16)
+    parser.add_argument("--n_epochs", type=int, default=32)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--n_subsets", type=int, default=8)
     parser.add_argument("--model_tag", type=str, default="base")

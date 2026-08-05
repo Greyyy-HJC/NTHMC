@@ -81,12 +81,12 @@ class FieldTransformation:
         self.compile_enabled = compile_enabled
 
         self.hyperparams = {
-            "lr": 0.0001,
+            "lr": 0.00025,
             "weight_decay": 1e-5,
-            "factor": 0.5,
-            "patience": 1,
-            "max_grad_norm": 10.0,
-            "early_stop_patience": 3,
+            "factor": 0.2,
+            "patience": 0,
+            "max_grad_norm": 5.0,
+            "early_stop_patience": 4,
             "loss_weights": (1.0, 1.0, 1.0, 1.0),
             "checkpoint_delta": False,
             "inverse_max_iters": 200,

@@ -2,6 +2,12 @@
 
 This is an append-only development history for NTHMC.
 
+## 2026-08-05
+
+- Selected a stable U(2) base-training protocol after controlled learning-rate and scheduler sweeps: `lr=2.5e-4`, `ReduceLROnPlateau(factor=0.2, patience=0)`, gradient clip 5, early-stop patience 4, and a 32-epoch ceiling. All eight L16 beta-10 production seeds stopped at epochs 14–16 and passed the loss-tail stability gate, with terminal validation rebounds of 0.69%–4.64% and central/traceless cap saturation no greater than 1.7%/0.1%.
+- Regenerated and validated the complete 32-combination L16 optimized-protocol `base` FT-HMC grid at evaluation beta 10, 12, 14, and 16 with eight seeds, 2048 topology samples per run, fixed step size 0.10, and no non-finite values. The corresponding `R_gamma(16)` / `R_deltaQ` results are 1.067(73)/1.130(44), 0.997(38)/0.972(25), 0.97(12)/0.990(80), and 1.18(27)/1.07(27). Compared with the prior high-LR best-checkpoint base, the new training curves are substantially more stable but the FT-HMC metrics are not improved; this regenerated grid is the baseline for future controlled architecture searches.
+- Parameterized the reusable U(2) training and base-evaluation PBS generators for queue-safe per-seed runs, retained `by-gpu` as the default, added GPU-allocation validation for four-GPU training, and limited per-rank CPU thread pools to prevent colocated-job thread exhaustion.
+
 ## 2026-07-21
 
 - Rebased `presentation/docs/optimization_plan.md` onto the finished U(2) L16 train-β=10 `base` production baseline and `2du2_scaling.ipynb` metrics (Torch train / JAX eval paths, dual `choose_model` registries, Phase 0–1 marked done; β=12 HMC seed 2008 still provisional).
