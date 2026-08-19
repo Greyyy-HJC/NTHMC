@@ -109,7 +109,18 @@ def collect_training_diagnostics(transform: Any, test_data: torch.Tensor, batch_
         force_components = transform._force_loss_components(force)
         action_force_components = transform._force_loss_components(action_force)
         jac_force_components = transform._force_loss_components(jac_force)
-        force_topo_alignment = transform._force_topology_alignment(force, topo_grad)
+        force_topo_alignment = transform._force_topology_alignment_tensor(force, topo_grad).detach()
+        phase_force_topo_alignment = transform._force_topology_alignment_tensor(
+            force[..., :1],
+            topo_grad[..., :1],
+        ).detach()
+        physical_topo_grad = transform.compute_topology_grad(probe)
+        phase_mobility = transform._phase_topology_mobility_per_sample(topo_grad).detach()
+        physical_phase_mobility = transform._phase_topology_mobility_per_sample(physical_topo_grad).detach()
+        phase_mobility_reward = transform._phase_topology_mobility_reward(
+            topo_grad,
+            physical_topo_grad,
+        ).detach()
 
     force_weighted_loss = transform._weighted_force_loss(force_components)
     jac_logdet = jac_logdet.detach()
@@ -132,7 +143,20 @@ def collect_training_diagnostics(transform: Any, test_data: torch.Tensor, batch_
         "force_components": force_components,
         "action_force_components": action_force_components,
         "jac_force_components": jac_force_components,
-        "force_topo_alignment": force_topo_alignment,
+        "force_topo_alignment": float(force_topo_alignment.mean().cpu()),
+        "force_topo_abs_alignment": float(force_topo_alignment.abs().mean().cpu()),
+        "force_topo_alignment_sq": float((force_topo_alignment**2).mean().cpu()),
+        "phase_force_topo_alignment": float(phase_force_topo_alignment.mean().cpu()),
+        "phase_force_topo_abs_alignment": float(phase_force_topo_alignment.abs().mean().cpu()),
+        "phase_force_topo_alignment_sq": float((phase_force_topo_alignment**2).mean().cpu()),
+        "phase_topo_mobility": float(phase_mobility.mean().cpu()),
+        "physical_phase_topo_mobility": float(physical_phase_mobility.mean().cpu()),
+        "phase_topo_mobility_ratio": float(
+            ((phase_mobility + torch.finfo(phase_mobility.dtype).eps) / (
+                physical_phase_mobility + torch.finfo(physical_phase_mobility.dtype).eps
+            )).mean().cpu()
+        ),
+        "phase_topo_mobility_reward": float(phase_mobility_reward.mean().cpu()),
         "jac_logdet_diag": jac_logdet_diag,
     }
 
@@ -175,7 +199,16 @@ def print_training_diagnostics(transform: Any, diagnostics: dict[str, Any], epoc
         f"force_l4={force_components['l4']:.6f} "
         f"force_l6={force_components['l6']:.6f} "
         f"force_l8={force_components['l8']:.6f} "
-        f"force_topo_cos={diagnostics['force_topo_alignment']:.6f}"
+        f"force_topo_cos={diagnostics['force_topo_alignment']:.6f} "
+        f"force_topo_abs_cos={diagnostics['force_topo_abs_alignment']:.6f} "
+        f"force_topo_cos_sq={diagnostics['force_topo_alignment_sq']:.6f} "
+        f"phase_force_topo_cos={diagnostics['phase_force_topo_alignment']:.6f} "
+        f"phase_force_topo_abs_cos={diagnostics['phase_force_topo_abs_alignment']:.6f} "
+        f"phase_force_topo_cos_sq={diagnostics['phase_force_topo_alignment_sq']:.6f} "
+        f"phase_topo_mobility={diagnostics['phase_topo_mobility']:.6e} "
+        f"physical_phase_topo_mobility={diagnostics['physical_phase_topo_mobility']:.6e} "
+        f"phase_topo_mobility_ratio={diagnostics['phase_topo_mobility_ratio']:.6f} "
+        f"phase_topo_mobility_reward={diagnostics['phase_topo_mobility_reward']:.6f}"
     )
     transform.print(
         f"Epoch {epoch_display}/{n_epochs} force_split_diag: "

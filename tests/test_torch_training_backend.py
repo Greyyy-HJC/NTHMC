@@ -42,6 +42,74 @@ def test_fixed_batches_and_masked_u1_gradient_match_unpadded() -> None:
     assert all(torch.allclose(left, right, atol=1e-6, rtol=1e-5) for left, right in zip(grads_masked, grads_single))
 
 
+def test_u2_default_mobility_weight_is_one() -> None:
+    transform = TorchU2(2, n_subsets=1, model_tag="base")
+    assert transform.hyperparams["mobility_weight"] == 1.0
+
+
+def test_u2_phase_topology_mobility_is_normalized_bounded_and_phase_only() -> None:
+    transform = TorchU2(2, n_subsets=1, model_tag="base")
+    physical = torch.zeros(2, 1, 1, 1, 4)
+    physical[..., 0] = torch.tensor([[[[1.0]]], [[[2.0]]]])
+    physical[..., 1:] = 100.0
+    transformed = physical.clone()
+
+    mobility = transform._phase_topology_mobility_per_sample(physical)
+    identity_reward = transform._phase_topology_mobility_reward(transformed, physical)
+    transformed[..., 0] *= 2
+    increased_reward = transform._phase_topology_mobility_reward(transformed, physical)
+
+    assert torch.allclose(mobility, torch.tensor([0.25, 1.0]))
+    assert torch.allclose(identity_reward, torch.zeros(2))
+    assert torch.allclose(increased_reward, torch.full((2,), 0.3))
+
+
+def test_u2_mobility_loss_masks_padding_and_zero_weight_skips_topology(monkeypatch) -> None:
+    transform = TorchU2(
+        2,
+        n_subsets=1,
+        model_tag="base",
+        hyperparams={"mobility_weight": 2.0},
+    )
+    transform.train_beta = 1.0
+    links = torch.zeros(2, 1)
+    valid = torch.tensor([True, False])
+    force = torch.tensor([[1.0, 0.0], [3.0, 0.0]])
+    physical_topo_grad = torch.ones(2, 1, 1, 1, 4)
+    transformed_topo_grad = physical_topo_grad.clone()
+    transformed_topo_grad[..., 0] *= 2
+    monkeypatch.setattr(transform, "inverse", lambda value, sample_mask: value)
+    monkeypatch.setattr(
+        transform,
+        "compute_transformed_force_and_topology_grad",
+        lambda value, beta, create_graph: (force, transformed_topo_grad),
+    )
+    monkeypatch.setattr(transform, "compute_topology_grad", lambda value: physical_topo_grad)
+
+    objective, force_loss = transform.loss_terms(links, sample_mask=valid)
+    expected_force = transform._weighted_force_loss_per_sample(force)[0]
+
+    assert torch.allclose(force_loss, expected_force)
+    assert torch.allclose(objective, expected_force - 0.6)
+
+    transform.hyperparams["mobility_weight"] = 0.0
+    monkeypatch.setattr(
+        transform,
+        "compute_transformed_force",
+        lambda value, beta, create_graph: force,
+    )
+    monkeypatch.setattr(
+        transform,
+        "compute_transformed_force_and_topology_grad",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("mobility path should be skipped")),
+    )
+
+    objective, force_loss = transform.loss_terms(links, sample_mask=valid)
+
+    assert torch.allclose(objective, expected_force)
+    assert torch.allclose(force_loss, expected_force)
+
+
 def test_distributed_batches_use_per_rank_batch_size() -> None:
     per_rank_batch_size = 12
     world_size = 4

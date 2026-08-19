@@ -88,6 +88,7 @@ class FieldTransformation:
             "max_grad_norm": 5.0,
             "early_stop_patience": 4,
             "loss_weights": (1.0, 1.0, 1.0, 1.0),
+            "mobility_weight": 1.0,
             "checkpoint_delta": False,
             "inverse_max_iters": 200,
             "inverse_tol": 1e-6,
@@ -888,6 +889,23 @@ class FieldTransformation:
         )
         return total_force, topo_grad
 
+    def compute_topology_grad(
+        self,
+        links: torch.Tensor,
+        *,
+        create_graph: bool = False,
+    ) -> torch.Tensor:
+        algebra = torch.zeros(
+            (*links.shape[:-1], 4),
+            device=self.device,
+            dtype=links.dtype,
+            requires_grad=True,
+        )
+        varied_links = u2_mul(u2_exp(algebra), links.detach())
+        plaquettes = plaquette_from_field_batch(varied_links)
+        topology = self._soft_topology_from_plaquettes(plaquettes[..., 0])
+        return torch.autograd.grad(topology.sum(), algebra, create_graph=create_graph)[0]
+
     def compute_transformed_force_terms(
         self,
         links: torch.Tensor,
@@ -941,25 +959,51 @@ class FieldTransformation:
         create_graph: bool = True,
         sample_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        objective, _ = self.loss_terms(
+            links_ori,
+            create_graph=create_graph,
+            sample_mask=sample_mask,
+        )
+        return objective
+
+    def loss_terms(
+        self,
+        links_ori: torch.Tensor,
+        *,
+        create_graph: bool = True,
+        sample_mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         if self.train_beta is None:
             raise RuntimeError("train_beta is not set")
         valid = torch.ones(links_ori.shape[0], dtype=torch.bool, device=links_ori.device) if sample_mask is None else sample_mask.bool()
         links_new = self.inverse(links_ori, sample_mask=valid)
-        # Keep the original alignment-term path here for quick future rollback/testing:
-        # force_new, topo_grad = self.compute_transformed_force_and_topology_grad(
-        #     links_new,
-        #     self.train_beta,
-        #     create_graph=create_graph,
-        # )
-        # return self._weighted_force_loss_tensor(force_new) + self._force_topology_alignment_loss(force_new, topo_grad)
-        # TODO: add square on the alignment term, think of tuning the weights of these two terms
-        force_new = self.compute_transformed_force(
-            links_new,
-            self.train_beta,
-            create_graph=create_graph,
-        )
-        per_sample = self._weighted_force_loss_per_sample(force_new)
-        return (per_sample * valid.to(per_sample.dtype)).sum() / valid.sum().clamp_min(1)
+        mobility_weight = float(self.hyperparams["mobility_weight"])
+        if mobility_weight == 0.0:
+            force_new = self.compute_transformed_force(
+                links_new,
+                self.train_beta,
+                create_graph=create_graph,
+            )
+            mobility_reward = None
+        else:
+            force_new, topo_grad = self.compute_transformed_force_and_topology_grad(
+                links_new,
+                self.train_beta,
+                create_graph=create_graph,
+            )
+            physical_topo_grad = self.compute_topology_grad(links_ori)
+            mobility_reward = self._phase_topology_mobility_reward(topo_grad, physical_topo_grad)
+
+        force_per_sample = self._weighted_force_loss_per_sample(force_new)
+        objective_per_sample = force_per_sample
+        if mobility_reward is not None:
+            objective_per_sample = objective_per_sample - mobility_weight * mobility_reward
+
+        valid_float = valid.to(force_per_sample.dtype)
+        valid_count = valid_float.sum().clamp_min(1)
+        objective = (objective_per_sample * valid_float).sum() / valid_count
+        force_loss = (force_per_sample * valid_float).sum() / valid_count
+        return objective, force_loss
 
     def _loss_weights(self) -> tuple[float, float, float, float]:
         weights = self.hyperparams.get("loss_weights", (1.0, 1.0, 1.0, 1.0))
@@ -1021,6 +1065,21 @@ class FieldTransformation:
         denominator = torch.linalg.vector_norm(force_flat, dim=1) * torch.linalg.vector_norm(topo_flat, dim=1)
         return numerator / denominator.clamp_min(torch.finfo(force.dtype).eps)
 
+    def _phase_topology_mobility_per_sample(self, topo_grad: torch.Tensor) -> torch.Tensor:
+        phase_grad = topo_grad[..., :1].reshape(topo_grad.shape[0], -1)
+        return torch.sum(phase_grad**2, dim=1) / (self.lattice_size * self.lattice_size)
+
+    def _phase_topology_mobility_reward(
+        self,
+        transformed_topo_grad: torch.Tensor,
+        physical_topo_grad: torch.Tensor,
+    ) -> torch.Tensor:
+        transformed = self._phase_topology_mobility_per_sample(transformed_topo_grad)
+        physical = self._phase_topology_mobility_per_sample(physical_topo_grad)
+        eps = torch.finfo(transformed.dtype).eps
+        ratio = (transformed + eps) / (physical.detach() + eps)
+        return ratio / (1 + ratio) - 0.5
+
     def _maybe_log_training_diagnostics(
         self,
         test_data: torch.Tensor,
@@ -1038,14 +1097,14 @@ class FieldTransformation:
             grad_norm,
         )
 
-    def train_step(self, links_ori: torch.Tensor, sample_mask: torch.Tensor) -> tuple[float, int, float]:
+    def train_step(self, links_ori: torch.Tensor, sample_mask: torch.Tensor) -> tuple[float, float, int, float]:
         links_ori = links_ori.to(self.device)
         sample_mask = sample_mask.to(self.device)
-        loss = self.loss_fn(links_ori, sample_mask=sample_mask)
-        local_count = sample_mask.sum().to(loss.dtype)
+        objective, force_loss = self.loss_terms(links_ori, sample_mask=sample_mask)
+        local_count = sample_mask.sum().to(objective.dtype)
         global_count = self.fabric.all_reduce(local_count.detach(), reduce_op="sum") if self.fabric is not None else local_count
         world_size = int(self.fabric.world_size) if self.fabric is not None else 1
-        backward_loss = loss * local_count * world_size / global_count.clamp_min(1)
+        backward_loss = objective * local_count * world_size / global_count.clamp_min(1)
         for optimizer in self.optimizers:
             optimizer.zero_grad(set_to_none=True)
         self.backward(backward_loss)
@@ -1053,13 +1112,22 @@ class FieldTransformation:
         self._clip_gradients()
         for optimizer in self.optimizers:
             optimizer.step()
-        return float(loss.detach().cpu()), int(local_count.detach().cpu()), grad_norm
+        return (
+            float(objective.detach().cpu()),
+            float(force_loss.detach().cpu()),
+            int(local_count.detach().cpu()),
+            grad_norm,
+        )
 
-    def evaluate_step(self, links_ori: torch.Tensor, sample_mask: torch.Tensor) -> tuple[float, int]:
+    def evaluate_step(self, links_ori: torch.Tensor, sample_mask: torch.Tensor) -> tuple[float, float, int]:
         links_ori = links_ori.to(self.device)
         sample_mask = sample_mask.to(self.device)
-        loss = self.loss_fn(links_ori, create_graph=False, sample_mask=sample_mask)
-        return float(loss.detach().cpu()), int(sample_mask.sum().cpu())
+        objective, force_loss = self.loss_terms(links_ori, create_graph=False, sample_mask=sample_mask)
+        return (
+            float(objective.detach().cpu()),
+            float(force_loss.detach().cpu()),
+            int(sample_mask.sum().cpu()),
+        )
 
     def train(self, train_data: torch.Tensor, test_data: torch.Tensor, train_beta: float, *, n_epochs: int, batch_size: int) -> None:
         self.train_beta = train_beta
@@ -1074,7 +1142,9 @@ class FieldTransformation:
 
         train_losses: list[float] = []
         test_losses: list[float] = []
-        best_loss = float("inf")
+        train_force_losses: list[float] = []
+        test_force_losses: list[float] = []
+        best_force_loss = float("inf")
         best_epoch = -1
         epochs_without_improvement = 0
         early_stop_patience = int(self.hyperparams.get("early_stop_patience", 0))
@@ -1083,38 +1153,48 @@ class FieldTransformation:
         for epoch in tqdm(range(n_epochs), desc="Training epochs", disable=progress_disabled):
             self._set_models_mode(True)
             epoch_losses = []
+            epoch_force_losses = []
             grad_norms = []
             for batch, mask in fixed_batches(train_data, distributed_batch_size, shuffle=True, seed=epoch):
                 local, local_mask = local_batch(batch, mask, rank=rank, world_size=world_size)
-                batch_loss, valid_count, grad_norm = self.train_step(local, local_mask)
+                batch_loss, batch_force_loss, valid_count, grad_norm = self.train_step(local, local_mask)
                 epoch_losses.append((batch_loss, valid_count))
+                epoch_force_losses.append((batch_force_loss, valid_count))
                 grad_norms.append(grad_norm)
             train_loss = self._global_weighted_epoch_loss(epoch_losses)
+            train_force_loss = self._global_weighted_epoch_loss(epoch_force_losses)
             mean_grad_norm = self._global_mean(grad_norms)
             train_losses.append(train_loss)
+            train_force_losses.append(train_force_loss)
 
             self._set_models_mode(False)
             test_epoch_losses = []
+            test_epoch_force_losses = []
             for batch, mask in fixed_batches(test_data, distributed_batch_size, shuffle=False, seed=0):
                 local, local_mask = local_batch(batch, mask, rank=rank, world_size=world_size)
-                test_epoch_losses.append(self.evaluate_step(local, local_mask))
+                batch_loss, batch_force_loss, valid_count = self.evaluate_step(local, local_mask)
+                test_epoch_losses.append((batch_loss, valid_count))
+                test_epoch_force_losses.append((batch_force_loss, valid_count))
             test_loss = self._global_weighted_epoch_loss(test_epoch_losses)
+            test_force_loss = self._global_weighted_epoch_loss(test_epoch_force_losses)
             test_losses.append(test_loss)
+            test_force_losses.append(test_force_loss)
 
-            improved = test_loss < best_loss
+            improved = test_force_loss < best_force_loss
             if improved:
-                self.save_best_model(epoch, test_loss)
-                best_loss = test_loss
+                self.save_best_model(epoch, test_force_loss)
+                best_force_loss = test_force_loss
                 best_epoch = epoch
                 epochs_without_improvement = 0
             else:
                 epochs_without_improvement += 1
             for scheduler in self.schedulers:
-                scheduler.step(test_loss)
+                scheduler.step(test_force_loss)
 
             self.print(
                 f"Epoch {epoch + 1}/{n_epochs} - "
                 f"Train Loss: {train_loss:.6f} - Test Loss: {test_loss:.6f} - "
+                f"Train Force Loss: {train_force_loss:.6f} - Test Force Loss: {test_force_loss:.6f} - "
                 f"LR: {self._format_learning_rates()}"
             )
             self._maybe_log_training_diagnostics(test_data, batch_size, epoch + 1, n_epochs, mean_grad_norm)
@@ -1125,11 +1205,11 @@ class FieldTransformation:
             ):
                 self.print(
                     f"Early stopping at epoch {epoch + 1}; "
-                    f"best epoch {best_epoch + 1} with test loss {best_loss:.6f}"
+                    f"best epoch {best_epoch + 1} with test force loss {best_force_loss:.6f}"
                 )
                 break
 
-        self.plot_training_history(train_losses, test_losses)
+        self.plot_training_history(train_losses, test_losses, train_force_losses, test_force_losses)
         if self.fabric is not None:
             self.fabric.barrier()
         self.load_best_model(train_beta)
@@ -1234,7 +1314,13 @@ class FieldTransformation:
                 scheduler.load_state_dict(checkpoint[key])
         self.print(f"Loaded best model from epoch {checkpoint['epoch'] + 1} with loss {checkpoint['loss']:.6f}")
 
-    def plot_training_history(self, train_losses: list[float], test_losses: list[float]) -> None:
+    def plot_training_history(
+        self,
+        train_losses: list[float],
+        test_losses: list[float],
+        train_force_losses: list[float],
+        test_force_losses: list[float],
+    ) -> None:
         if self.train_beta is None:
             raise RuntimeError("train_beta is not set")
         if self.fabric is not None and self.fabric.global_rank != 0:
@@ -1255,5 +1341,26 @@ class FieldTransformation:
         plt.savefig(self.plot_dir / f"cnn_loss_train_beta{beta_tag}_{self.save_tag}.pdf", transparent=True)
         plt.close()
 
+        plt.figure(figsize=(10, 5))
+        plt.plot(epochs_axis, train_force_losses, label="Train force")
+        plt.plot(epochs_axis, test_force_losses, label="Test force")
+        plt.xlabel("Epoch")
+        plt.ylabel("Weighted force loss")
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig(self.plot_dir / f"cnn_force_loss_train_beta{beta_tag}_{self.save_tag}.pdf", transparent=True)
+        plt.close()
+
         np.savetxt(self.dump_dir / f"train_loss_train_beta{beta_tag}_{self.save_tag}.csv", train_losses, fmt="%.6e")
         np.savetxt(self.dump_dir / f"test_loss_train_beta{beta_tag}_{self.save_tag}.csv", test_losses, fmt="%.6e")
+        np.savetxt(
+            self.dump_dir / f"train_force_loss_train_beta{beta_tag}_{self.save_tag}.csv",
+            train_force_losses,
+            fmt="%.6e",
+        )
+        np.savetxt(
+            self.dump_dir / f"test_force_loss_train_beta{beta_tag}_{self.save_tag}.csv",
+            test_force_losses,
+            fmt="%.6e",
+        )

@@ -1,5 +1,0 @@
-- 完成 architecture 搜索之后，就只保留双指标 lead 的 model，和优化 tune 之后的 base model，清理其他的测试文件；
-- 把保留的 双指标 lead 的 model，和优化 tune 之后的 base model 补完整的 8 seed 的 training 和 2048 configs 的 evaluation；
-- 在 /eagle/fthmc/run/NTHMC/presentation/docs 里写一个 model.md 文件，记录所有的 model 定义，以及相应的 evaluation 指标对比；
-- 整理仓库准备 commit 和 push，检查有没有没必要的改动，一般来说应该只需要增加新的 model 定义，以及相应的 training 和 evaluation；
-- commit 并 push，并提交 PR 到 main 分支，我会手动 merge。

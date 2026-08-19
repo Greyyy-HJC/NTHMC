@@ -83,10 +83,12 @@ Standard HMC uses `evaluation/hmc/compare_hmc.py`. The symmetric scaling drivers
 ## L16 PBS Production
 
 The `2du1` production point is `L=16, beta=3.0`; `2du2` trains at `L=16, beta=10.0`
-and evaluates at beta 10, 12, 14, and 16. Gauge generation produces 4096 configurations,
-and eight training seeds feed matching 2048-sample HMC and FT-HMC evaluations. Gauge
-generation and standard HMC tune their step sizes automatically toward acceptance 0.70.
-FT-HMC uses fixed step sizes (`0.35` for U(1), `0.10` for U(2)) because transformed-force
+and evaluates at beta 10, 12, 14, and 16. U(2) training includes a phase-topology
+mobility term with default weight 1; set `MOBILITY_WEIGHT=0` to recover the
+force-only path. Gauge generation produces 4096 configurations, and eight training
+seeds feed matching 2048-sample HMC and FT-HMC evaluations. Gauge generation and
+standard HMC tune their step sizes automatically toward acceptance 0.70. FT-HMC
+uses fixed step sizes (`0.35` for U(1), `0.10` for U(2)) because transformed-force
 tuning is expensive.
 
 Each `gen_sub.sh` starts with one experiment-settings block. Change values there; command
@@ -120,4 +122,5 @@ Checkpoint filenames and metadata include `model_tag`. Training continuation pre
 - [`presentation/jax_benchmark/jax_benchmark_summary.md`](presentation/jax_benchmark/jax_benchmark_summary.md) summarizes the final U(1)/U(2) historical-vs-current pipelines.
 - Each benchmark directory contains final logs/dumps, provenance, checksums, and a
   `summarize.py` script that regenerates its summary and timing CSV.
+- [`presentation/docs/alignment.md`](presentation/docs/alignment.md) records the U(2) topology-alignment rejection and the adopted phase-topology mobility term.
 - [`presentation/docs/Field_transform.html`](presentation/docs/Field_transform.html) is the browser-friendly field-transform derivation.

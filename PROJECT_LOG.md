@@ -2,6 +2,30 @@
 
 This is an append-only development history for NTHMC.
 
+
+## 2026-08-19
+
+- Adopted phase-topology mobility as the U(2) training default (`mobility_weight=1.0` in `FieldTransformation` and `2du2/model_training/gen_sub.sh`). Removed the `2du2/evaluation/alignment` comparison workspace and the align/mobility weight-screen training dumps; historical evidence stays in `presentation/docs/alignment.md`. Production `evaluation/base` dumps remain the force-only grid until the next default-protocol retrain.
+
+- Next direction: add a larger weight on those links with angles close to pi or -pi.
+- Topo freezing: large-angle links become less and less in each configuration; concentrate loss on those important links.
+- Topology tunneling is mainly due to the large-angle links. Links with angles ~ -pi or pi are important; -pi and pi are the same boundary, and the number of links on the two sides of the boundary should be asymmetric.
+
+## 2026-08-12
+
+- Updated `presentation/docs/alignment.md` after step-size retunes: refreshed completion matrix, healthy per-seed tables, and jackknife summaries for β=10/12/14. β=10 shows a clear `R_gamma` mobility advantage with unresolved `R_deltaQ`; β=12/14 means lean mobility-ward but are not 1σ-separated. Added β=14 seed 2008 illustration; resubmitted failed β=10 seed 2025 retune as PBS 172892.
+
+## 2026-08-10
+
+- Expanded `presentation/docs/alignment.md` with the completed `mobility_w0.1` screen row, training force-loss gate table, interim multi-seed/multi-beta `mobility_w1` vs production `base` completion matrix and jackknife snapshots, and explicit caveats about low-accept chains and the 1-GPU vs 4-GPU training mismatch. Refreshed the screen Rmetrics SVG to include `w0.1`.
+- Cancelled the fixed-step incomplete resubmits and resubmitted all low-accept or missing `mobility_w1` `(β, seed)` combinations with automatic FT step-size tuning (PBS 172501–172519; initial step 0.05, then 2048 configs). Kept healthy fixed-step dumps for β=10 seed 1029, β=12 seeds 1029/1999/2008, and β=14 seed 1029.
+
+## 2026-08-06
+
+- Documented the L16 beta=10 seed=1029 mobility screen in `presentation/docs/alignment.md` with three comparison SVGs under `presentation/docs/plots/` (Q(t), A(δ), R_γ/R_ΔQ). Explicitly marked the screen as suggestive only and recorded the 8-seed `mobility_w1` confirmation protocol (reuse seed 1029; train the other seven; FT-HMC at β=10 with 2048 configs; jackknife vs HMC and production base).
+- Completed L16 beta=10 seed=1029 FT-HMC screens for phase-topology mobility weights 1 and 10 (`ft_step_size=0.15625`, 512 configs). Versus HMC: `mobility_w1` reached accept 0.807, `R_gamma(16)=1.941`, `R_deltaQ=1.626`; `mobility_w10` reached accept 0.744, `R_gamma(16)=1.390`, `R_deltaQ=1.550`. Production base reference is `R_gamma=0.987`, `R_deltaQ=1.345`. `mobility_w0.1` probe finished at step 0.15625 / accept 0.812; formal 512-config FT-HMC resubmitted.
+- First `mobility_w1` confirmation trains for seeds 1107–2025 (jobs 171397–171403) exited immediately: four-GPU `by-gpu` allocations exposed eight devices without parseable PBS GPU assignment. Resubmitted those seven seeds as one-GPU jobs 171447–171453; all seven finished with checkpoints. Seed-1029 formal `mobility_w0.1` FT-HMC completed (accept 0.816, `R_gamma=1.473`, `R_deltaQ=1.398`); weight screen still ranks `mobility_w1` first. Submitted confirmation FT-HMC at β=10/12/14 with fixed `ft_step_size=0.15625` and `n_configs=2048`. The first wave left gaps (mid-run kills and a by-gpu project limit); incomplete combinations were resubmitted as 172459–172470.
+
 ## 2026-08-05
 
 - Selected a stable U(2) base-training protocol after controlled learning-rate and scheduler sweeps: `lr=2.5e-4`, `ReduceLROnPlateau(factor=0.2, patience=0)`, gradient clip 5, early-stop patience 4, and a 32-epoch ceiling. All eight L16 beta-10 production seeds stopped at epochs 14–16 and passed the loss-tail stability gate, with terminal validation rebounds of 0.69%–4.64% and central/traceless cap saturation no greater than 1.7%/0.1%.

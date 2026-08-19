@@ -47,6 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--inverse_max_iters", type=int, default=None)
     parser.add_argument("--inverse_tol", type=float, default=None)
     parser.add_argument("--loss_weights", type=float, nargs=4, default=None, metavar=("W2", "W4", "W6", "W8"))
+    parser.add_argument("--mobility_weight", type=float, default=None)
     parser.add_argument("--data_parallel", action="store_true")
     parser.add_argument("--devices", type=int, default=1)
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "gpu", "cuda"])
@@ -98,6 +99,8 @@ def main() -> None:
         hyperparams["inverse_tol"] = args.inverse_tol
     if args.loss_weights is not None:
         hyperparams["loss_weights"] = tuple(args.loss_weights)
+    if args.mobility_weight is not None:
+        hyperparams["mobility_weight"] = args.mobility_weight
 
     fabric.print("=" * 60)
     fabric.print(">>> U(2) PyTorch field-transformation training")

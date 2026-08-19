@@ -16,12 +16,20 @@ max_grad_norm="${MAX_GRAD_NORM:-5.0}"
 plateau_factor="${PLATEAU_FACTOR:-0.2}"
 plateau_patience="${PLATEAU_PATIENCE:-0}"
 early_stop_patience="${EARLY_STOP_PATIENCE:-4}"
+mobility_weight="${MOBILITY_WEIGHT:-1.0}"
+if_check_jac="${IF_CHECK_JAC:-false}"
 walltime="${WALLTIME:-04:00:00}"
 gpu_count="${GPUS:-4}"
 pbs_host="${PBS_HOST:-}"
 pbs_queue="${PBS_QUEUE:-by-gpu}"
 read -r -a loss_weights <<< "${LOSS_WEIGHTS:-1.0 1.0 1.0 1.0}"
 read -r -a seeds <<< "${SEEDS:-1029 1107 1331 1984 1999 2008 2017 2025}"
+
+case "${if_check_jac}" in
+    true) check_jac_flag_line="    --if_check_jac \\"$'\n' ;;
+    false) check_jac_flag_line="" ;;
+    *) echo "IF_CHECK_JAC must be true or false" >&2; exit 1 ;;
+esac
 
 case "${pbs_queue}" in
     by-gpu)
@@ -149,12 +157,13 @@ ${REPO_ROOT}/.venv/bin/python train.py \\
     --model_tag ${model_tag} \\
     --save_tag ${save_tag} \\
     --rand_seed ${seed} \\
-    --lr ${lr} \\
+${check_jac_flag_line}    --lr ${lr} \\
     --max_grad_norm ${max_grad_norm} \\
     --plateau_factor ${plateau_factor} \\
     --plateau_patience ${plateau_patience} \\
     --early_stop_patience ${early_stop_patience} \\
     --loss_weights ${loss_weights[*]} \\
+    --mobility_weight ${mobility_weight} \\
     --data_parallel \\
     --device cuda
 

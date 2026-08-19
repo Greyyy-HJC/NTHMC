@@ -40,7 +40,7 @@ Training is PyTorch; FT-HMC evaluation is JAX. New architecture tags must be reg
 | [`src/nthmc/u2/training.py`](../../src/nthmc/u2/training.py) | **Editable** | Loss function, `hyperparams` defaults, training-side helpers |
 | [`src/nthmc/u2/models.py`](../../src/nthmc/u2/models.py) | **Editable (eval mirror)** | JAX twin of any new `model_tag` so `compare_fthmc.py` can load checkpoints |
 | [`src/nthmc/u2/field_transform.py`](../../src/nthmc/u2/field_transform.py) | **Mostly frozen** | JAX eval geometry / inverse / force runtime; do not change loop geometry without tests |
-| [`2du2/model_training/train.py`](../../2du2/model_training/train.py) | **Editable** | CLI wiring for new hyperparams (e.g. `--align_weight`) |
+| [`2du2/model_training/train.py`](../../2du2/model_training/train.py) | **Editable** | CLI wiring for new hyperparams (e.g. `--mobility_weight`) |
 
 Training and evaluation imports:
 
@@ -66,13 +66,14 @@ Before the first architecture edit, snapshot `training_models.py` + `training.py
 **In `training.py`:**
 
 - `hyperparams` defaults and new keys (passed via CLI in `train.py`)
-- `loss_fn` and helpers: `_weighted_force_loss_*`, stubbed topology alignment (~lines 948–954), new regularizers
+- `loss_fn` / `loss_terms` and helpers: `_weighted_force_loss_*`, phase-topology mobility, new regularizers
 - Do **not** change core loop/Jacobian geometry unless `tests/test_u2.py` is extended
 
 **Hyperparams wired via CLI** (`2du2/model_training/train.py`):
 
 - `--lr`, `--weight_decay`, `--max_grad_norm`
 - `--loss_weights` (4-tuple: w2, w4, w6, w8)
+- `--mobility_weight` (default 1.0; 0 recovers the force-only path)
 - `--plateau_patience`, `--early_stop_patience`
 
 ### Hard constraints on CNN I/O
@@ -381,7 +382,8 @@ The search directions below target distinct mechanisms so results stay interpret
 | D1 | Receptive field / multiscale | [`training_models.py`](../../src/nthmc/u2/training_models.py) + JAX [`models.py`](../../src/nthmc/u2/models.py) | new tag (e.g. `deep`) | R_gamma(16) | T1 (heavier) |
 | D2 | Coefficient-budget split | same | `balanced_cap` (`cap` is aggressive failure probe) | R_deltaQ | cheap T1 |
 | D3 | Force-tail loss shaping | [`train.py`](../../2du2/model_training/train.py) CLI | `--loss_weights` (no model edit) | acceptance → R_gamma | cheapest |
-| D4 | Topology-directed loss | [`training.py`](../../src/nthmc/u2/training.py) | `--align_weight` (new CLI) | R_gamma & R_deltaQ | T1 |
+| D4 | Force-topology alignment | [`training.py`](../../src/nthmc/u2/training.py) | rejected; cosine kept as diagnostic | — | T1 |
+| D18 | Phase-topology mobility | [`training.py`](../../src/nthmc/u2/training.py) | `--mobility_weight` (default 1.0) | R_gamma & R_deltaQ | T1 |
 | D5 | Hidden width | model registries | `wide24` | capacity | T1 (heavier) |
 | D6 | Dense larger kernel | model registries | `kernel5` | receptive field | T1 (heavier) |
 | D7 | Separate feature encoders | model registries | `split_input` | input specialization | T1 |
@@ -417,13 +419,19 @@ The search directions below target distinct mechanisms so results stay interpret
 - **Change:** sweep `--loss_weights` (e.g. `1 1 1 1` baseline vs `0.5 1 1.5 2` tail-heavy vs `0 0 1 1` tail-only) together with `--lr`, `--weight_decay`, `--max_grad_norm`. Applies to any `model_tag`.
 - **Risk:** over-weighting the tail destabilizes training; watch grad norm and test loss vs base at the same tier.
 
-### D4 — Topology-directed loss term
+### D4 — Force-topology alignment (rejected)
 
-- **Hypothesis:** minimizing the force norm only indirectly helps topology. Explicitly aligning the transformed force with the soft-topology gradient steers MD trajectories along topology-changing directions — a direct proxy for the goal metrics.
-- **Mechanism:** loss objective (topology-directed).
-- **Change:** re-enable the stubbed path in `training.py` `loss_fn` (commented near the `_force_topology_alignment_loss` call) using `compute_transformed_force_and_topology_grad`; add an `align_weight` hyperparam key (default `0.0`, so base behavior is unchanged) and a matching `--align_weight` CLI flag in `train.py`. Optionally tune `second_harmonic` in `_soft_topology_from_plaquettes`.
-- **Gate note:** training-only path (no Jacobian change → G2 unaffected), but extend `tests/test_u2.py` (G1) to cover the new loss branch.
-- **Risk:** the competing objective can raise the force norm and lower acceptance; tune `align_weight` against R_deltaQ / acceptance.
+- **Hypothesis tested:** aligning the transformed effective force with the soft-topology gradient might steer MD trajectories along topology-changing directions.
+- **Result:** stable L=16, beta=10, seed-1029 runs with weights 0, 1, 10, and 30 showed monotonically worse validation force loss and no increase in fixed-probe `cos^2`. The force is the effective-action gradient, not the Gaussian momentum, so this target does not implement the intended momentum guidance.
+- **Status:** removed from the training objective. Keep full/phase force-topology cosine as diagnostics only; see `presentation/docs/alignment.md`.
+
+### D18 — Phase-topology mobility
+
+- **Hypothesis:** increase the variance of the instantaneous topology velocity induced by Gaussian transformed-coordinate momentum, `E_p[(dQ_soft/dt)^2] = ||grad_z Q_soft(T(z))||^2`.
+- **Mechanism:** loss objective (topology mobility), restricted in the first controlled test to the central phase algebra component.
+- **Change:** normalize transformed phase mobility by its physical-coordinate value and use the bounded reward `r/(1+r)-1/2`.
+- **Status:** adopted as the U(2) training default with `mobility_weight=1.0`. Scheduler, early stopping, and checkpoint selection still use validation force loss. Set the weight to 0 to skip the extra topology autograd work.
+- **Result:** L=16 multi-seed confirmation showed a clear `R_gamma(16)` advantage at β=10; `R_deltaQ` and β=12/14 remain unresolved. See `presentation/docs/alignment.md`.
 
 ### D5–D9 — Controlled architecture ablations
 
