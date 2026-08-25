@@ -45,6 +45,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--plateau_patience", type=int, default=None)
     parser.add_argument("--inverse_max_iters", type=int, default=None)
     parser.add_argument("--inverse_tol", type=float, default=None)
+    parser.add_argument("--edge_weight", type=float, default=None)
+    parser.add_argument("--edge_power", type=float, default=None)
+    parser.add_argument("--edge_delta", type=float, default=None)
     parser.add_argument("--data_parallel", action="store_true")
     parser.add_argument("--devices", type=int, default=1)
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "gpu", "cuda"])
@@ -88,6 +91,12 @@ def main() -> None:
         hyperparams["inverse_max_iters"] = args.inverse_max_iters
     if args.inverse_tol is not None:
         hyperparams["inverse_tol"] = args.inverse_tol
+    if args.edge_weight is not None:
+        hyperparams["edge_weight"] = args.edge_weight
+    if args.edge_power is not None:
+        hyperparams["edge_power"] = args.edge_power
+    if args.edge_delta is not None:
+        hyperparams["edge_delta"] = args.edge_delta
 
     fabric.print("=" * 60)
     fabric.print(">>> U(1) PyTorch field-transformation training")

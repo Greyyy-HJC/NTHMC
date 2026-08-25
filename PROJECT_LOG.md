@@ -3,6 +3,20 @@
 This is an append-only development history for NTHMC.
 
 
+## 2026-08-25
+
+- Completed the 2du1 edge-weight confirmation: all five tags now have eight-seed β=3 FT-HMC (2048 configs). Versus production `base`: `s2_w1` \(R_\gamma=1.003(10)/+0.3\sigma\), \(R_{\Delta Q}=1.017(10)/+1.7\sigma\); `s2_w3` \(0.991(21)/-0.5\sigma\), \(1.005(9)/+0.6\sigma\); `s2_w10` \(1.009(28)/+0.3\sigma\), \(1.022(12)/+1.9\sigma\); `h05` \(0.998(27)/-0.1\sigma\), \(0.939(9)/-6.7\sigma\); `h15` \(1.039(15)/+2.6\sigma\), \(0.962(11)/-3.5\sigma\). Smooth weights are consistent with `base`. `h15` trades a small \(R_\gamma\) excess for a significant \(R_{\Delta Q}\) loss. β=5 seed-1029 probes are mixed and not a reason to expand. Default training stays `edge_weight=0`.
+- Added [`presentation/2du1_edge_weight.ipynb`](presentation/2du1_edge_weight.ipynb) to report the result, with plots under `presentation/plots/`, and refreshed [`presentation/docs/edge_weight.md`](presentation/docs/edge_weight.md).
+
+## 2026-08-21
+
+- Eight-seed β=3 FT-HMC (2048 configs) completed for `edge_s2_w1` and `edge_s2_w3`, and 7/8 for `edge_h15_w3`. Versus production `base`: `s2_w1` \(R_\gamma=1.003(22)\) / \(R_{\Delta Q}=1.017(14)\); `s2_w3` \(0.991(29)\) / \(1.005(12)\); `h15` \(1.035(20)\) / \(0.958(16)\). None pass the both-metrics win rule; the T1 512-config ranking does not survive. Submitted leftover `h15` seed 2025 and all eight `h05` / `s2_w10` evals (PBS 176191–176207). Submitted a β=5 seed-1029 probe for `s2_w1` / `s2_w3` / `h15` (PBS 176208–176210) after filling the remaining three `by-gpu` slots.
+- `h15` seed 2025 completed, making that tag 8/8 at β=3. Per-seed jackknife versus `base`: `s2_w1` \(R_\gamma=1.003(10)/+0.3\sigma\), \(R_{\Delta Q}=1.017(10)/+1.7\sigma\); `s2_w3` \(0.991(21)/-0.5\sigma\), \(1.005(9)/+0.6\sigma\); `h15` \(1.039(15)/+2.6\sigma\), \(0.962(11)/-3.5\sigma\). No tag beats `base` on both metrics. Partial `h05` (5 seeds) is worse on both. β=5 probes and remaining `h05`/`s2_w10` retries are still queued.
+
+## 2026-08-20
+
+- First remaining-seed train wave finished: `edge_s2_w1` and `edge_s2_w3` now have all eight checkpoints; `edge_s2_w10` is 5/8; `edge_h05_w3` and `edge_h15_w3` still only seed 1029 because their leftover scripts were never queued. Submitted those 17 trains (PBS 175926–175942) and started 8-seed β=3 FT-HMC (2048 configs) for `edge_s2_w1`; only seeds 1029/1107/1331 queued (175943–175945) before the `by-gpu` per-project limit. Physics results are still the seed-1029 T1 screen only.
+
 ## 2026-08-19
 
 - Adopted phase-topology mobility as the U(2) training default (`mobility_weight=1.0` in `FieldTransformation` and `2du2/model_training/gen_sub.sh`). Removed the `2du2/evaluation/alignment` comparison workspace and the align/mobility weight-screen training dumps; historical evidence stays in `presentation/docs/alignment.md`. Production `evaluation/base` dumps remain the force-only grid until the next default-protocol retrain.
@@ -10,6 +24,13 @@ This is an append-only development history for NTHMC.
 - Next direction: add a larger weight on those links with angles close to pi or -pi.
 - Topo freezing: large-angle links become less and less in each configuration; concentrate loss on those important links.
 - Topology tunneling is mainly due to the large-angle links. Links with angles ~ -pi or pi are important; -pi and pi are the same boundary, and the number of links on the two sides of the boundary should be asymmetric.
+- Started the 2du1 large-angle edge-link weighting experiment. Training loss can up-weight physical links near ±π (smooth `((1-cos θ)/2)^p` or a hard |wrap(θ)| threshold) while leaving the `base` architecture and JAX FT-HMC path unchanged. Added `2du1/evaluation/edge/` and `presentation/docs/edge_weight.md`. Submitted T1 seed-1029 trains 175680–175684 (`edge_s2_w{1,3,10}`, `edge_h{05,15}_w3`) and HMC 175685–175699 (β=4.0 all eight seeds; β=5.0 seeds 1029–2017). The last HMC (β=5.0 seed 2025) and all 16 production-base FT-HMC jobs at β=4.0/5.0 hit the `by-gpu` per-project limit; their scripts are already generated and should be `qsub`'d when slots free. Production β=3.0 dumps are untouched.
+- T1 trains `edge_s2_w1` (175680, exit 137) and `edge_s2_w3` (175681, exit 1) died at epoch 0 with `libgomp: Thread creation failed` after two 4-GPU jobs landed on the same Sophia node. Added `OMP/MKL/OPENBLAS/NUMEXPR_NUM_THREADS=1` to the 2du1 PBS generators (matching 2du2) and resubmitted those two trains. `edge_s2_w10` and `edge_h05_w3` finished; HMC jobs that exited in ~20s were successful U(1) L16 chains, not crashes.
+- Submitted the leftover production-base FT-HMC grid at eval β=4.0/5.0 with automatic step tuning (PBS 175714–175729; eight seeds each). HMC at those betas is complete.
+- All five T1 trains finished and passed the unweighted force-loss gate (best val force 10.36–10.64 vs production base 10.525). Submitted seed-1029 β=3 FT-HMC screens with 512 configs and automatic step tuning (PBS 175733–175737).
+- Hard-threshold T1 screens finished: `edge_h05_w3` accept 0.736 / \(R_\gamma=1.378\) / \(R_{\Delta Q}=1.560\); `edge_h15_w3` accept 0.756 / \(R_\gamma=1.740\) / \(R_{\Delta Q}=1.669\), both versus HMC on 512 truncated samples and both beating production base (\(R_\gamma=1.219\), \(R_{\Delta Q}=1.504\)). The three smooth screens and nine extra-beta production-base FT-HMC jobs died with JAX GPU OOM. Added `XLA_PYTHON_CLIENT_PREALLOCATE=false` and disabled CUDA command buffers in the 2du1 edge/base FT-HMC generators, then resubmitted those 12 jobs (PBS 175744–175755). HMC at eval β=4.0/5.0 is complete.
+- Recovered T1 smooth screens (175744–175746). Full seed-1029 ranking versus production `base`: `edge_h15_w3` \(R_\gamma=+43\%\) / \(R_{\Delta Q}=+11\%\); `edge_s2_w3` \(+22\%\) / \(+12\%\); `edge_s2_w10` does not beat `base` on \(R_\gamma\). Extra-beta production `base` FT-HMC is complete at β=5 (8/8) and 6/8 at β=4; seeds 1331 and 1984 are still running.
+- Started eight-seed confirmation for all five T1 tags (single-seed ranking treated as noisy). Submitted 18/35 remaining-seed 4-GPU trains before the `by-gpu` per-project limit (PBS 175820–175837: all seven seeds of `edge_s2_w1` and `edge_s2_w3`, plus `edge_s2_w10` seeds 1107–1999). Leftover scripts for `edge_s2_w10` 2008/2017/2025 and all seven seeds of `edge_h05_w3` / `edge_h15_w3` are generated. FT-HMC waits for checkpoints; first eval grid is β=3 with 2048 configs.
 
 ## 2026-08-12
 

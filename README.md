@@ -30,8 +30,9 @@ src/nthmc/core/               # Shared runtime, checkpoint, plotting, and traini
 src/nthmc/u1/                 # U(1) JAX runtime and PyTorch training implementation
 src/nthmc/u2/                 # U(2) JAX runtime and PyTorch training implementation
 tests/                        # Focused CPU-default tests
-presentation/jax_benchmark/   # Archived full-pipeline benchmark evidence
+presentation/                 # Scaling and experiment notebooks
 presentation/docs/            # Field-transform derivation and reference material
+presentation/jax_benchmark/   # Archived full-pipeline benchmark evidence
 ```
 
 Both physics workspaces use the same active structure:
@@ -42,6 +43,7 @@ gauge_generation/{generate.py,gen_sub.sh,dumps,logs,plots,scripts}
 model_training/{train.py,gen_sub.sh,dumps,logs,plots,scripts}
 evaluation/base/{compare_fthmc.py,gen_sub.sh,dumps,logs,plots,scripts}
 evaluation/hmc/{compare_hmc.py,gen_sub.sh,dumps,logs,plots,scripts}
+evaluation/<variant>/   # optional feature tests, e.g. 2du1/evaluation/edge
 artifacts/models/
 scripts/run_scaling.sh
 ```
@@ -123,4 +125,5 @@ Checkpoint filenames and metadata include `model_tag`. Training continuation pre
 - Each benchmark directory contains final logs/dumps, provenance, checksums, and a
   `summarize.py` script that regenerates its summary and timing CSV.
 - [`presentation/docs/alignment.md`](presentation/docs/alignment.md) records the U(2) topology-alignment rejection and the adopted phase-topology mobility term.
+- [`presentation/docs/edge_weight.md`](presentation/docs/edge_weight.md) records the U(1) large-angle / edge-link weighting experiment (`2du1/evaluation/edge`). The result notebook is [`presentation/2du1_edge_weight.ipynb`](presentation/2du1_edge_weight.ipynb).
 - [`presentation/docs/Field_transform.html`](presentation/docs/Field_transform.html) is the browser-friendly field-transform derivation.

@@ -42,6 +42,67 @@ def test_fixed_batches_and_masked_u1_gradient_match_unpadded() -> None:
     assert all(torch.allclose(left, right, atol=1e-6, rtol=1e-5) for left, right in zip(grads_masked, grads_single))
 
 
+def test_u1_zero_edge_weight_matches_unweighted_force_loss() -> None:
+    transform = TorchU1(2, n_subsets=1, model_tag="base", hyperparams={"inverse_max_iters": 2, "edge_weight": 0.0})
+    transform.train_beta = 1.0
+    theta = 0.2 * torch.randn(2, 2, 2, 2)
+    objective, force_loss = transform.loss_terms(theta)
+    assert torch.allclose(objective, force_loss)
+
+
+def test_u1_smooth_edge_weight_peaks_at_pi() -> None:
+    transform = TorchU1(2, n_subsets=1, model_tag="base", hyperparams={"edge_weight": 3.0, "edge_power": 2.0})
+    zeros = torch.zeros(1, 2, 2, 2)
+    pi_edge = torch.full((1, 2, 2, 2), float(torch.pi))
+    half = torch.full((1, 2, 2, 2), float(torch.pi) / 2)
+
+    assert torch.allclose(transform._edge_link_weight(zeros), torch.ones_like(zeros))
+    assert torch.allclose(transform._edge_link_weight(pi_edge), torch.full_like(pi_edge, 4.0))
+    assert torch.allclose(transform._edge_link_weight(-pi_edge), torch.full_like(pi_edge, 4.0))
+    mid = transform._edge_link_weight(half)
+    assert torch.allclose(mid, torch.full_like(half, 1.0 + 3.0 * 0.25))
+
+
+def test_u1_hard_edge_weight_masks_near_pi() -> None:
+    transform = TorchU1(
+        2,
+        n_subsets=1,
+        model_tag="base",
+        hyperparams={"edge_weight": 3.0, "edge_delta": 0.15},
+    )
+    theta = torch.zeros(1, 2, 2, 2)
+    theta[0, 0, 0, 0] = float(torch.pi) - 0.05
+    theta[0, 0, 0, 1] = float(torch.pi) - 0.20
+    theta[0, 1, 0, 0] = -float(torch.pi) + 0.01
+    weight = transform._edge_link_weight(theta)
+    assert torch.isclose(weight[0, 0, 0, 0], torch.tensor(4.0))
+    assert torch.isclose(weight[0, 0, 0, 1], torch.tensor(1.0))
+    assert torch.isclose(weight[0, 1, 0, 0], torch.tensor(4.0))
+    assert torch.isclose(weight[0, 1, 1, 1], torch.tensor(1.0))
+
+
+def test_u1_edge_weight_loss_masks_padding() -> None:
+    transform = TorchU1(
+        2,
+        n_subsets=1,
+        model_tag="base",
+        hyperparams={"inverse_max_iters": 2, "edge_weight": 3.0, "edge_power": 2.0},
+    )
+    transform.train_beta = 1.0
+    data = 0.05 * torch.arange(3 * 2 * 2 * 2, dtype=torch.float32).reshape(3, 2, 2, 2)
+    padded, mask = fixed_batches(data, 2, shuffle=False, seed=0)[-1]
+
+    loss_masked, force_masked = transform.loss_terms(padded, mask)
+    loss_single, force_single = transform.loss_terms(padded[:1])
+    grads_masked = torch.autograd.grad(loss_masked, [p for model in transform.models for p in model.parameters()])
+    grads_single = torch.autograd.grad(loss_single, [p for model in transform.models for p in model.parameters()])
+
+    assert torch.allclose(loss_masked, loss_single)
+    assert torch.allclose(force_masked, force_single)
+    assert loss_masked > force_masked
+    assert all(torch.allclose(left, right, atol=1e-6, rtol=1e-5) for left, right in zip(grads_masked, grads_single))
+
+
 def test_u2_default_mobility_weight_is_one() -> None:
     transform = TorchU2(2, n_subsets=1, model_tag="base")
     assert transform.hyperparams["mobility_weight"] == 1.0

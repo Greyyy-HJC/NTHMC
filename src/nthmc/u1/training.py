@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import matplotlib
@@ -23,6 +24,7 @@ from nthmc.u1.training_observables import (
     get_rect_mask,
     plaq_from_field_batch,
     rect_from_field_batch,
+    regularize,
 )
 
 
@@ -72,6 +74,9 @@ class FieldTransformation:
             "max_grad_norm": 10.0,
             "inverse_max_iters": 200,
             "inverse_tol": 1e-6,
+            "edge_weight": 0.0,
+            "edge_power": 2.0,
+            "edge_delta": 0.0,
         }
         if hyperparams:
             self.hyperparams.update(hyperparams)
@@ -434,21 +439,56 @@ class FieldTransformation:
 
         return torch.autograd.grad(total_action.sum(), theta, create_graph=True)[0]
 
-    def loss_fn(self, theta_ori: torch.Tensor, sample_mask: torch.Tensor | None = None) -> torch.Tensor:
-        if self.train_beta is None:
-            raise RuntimeError("train_beta is not set")
-        valid = torch.ones(theta_ori.shape[0], dtype=torch.bool, device=theta_ori.device) if sample_mask is None else sample_mask.bool()
-        theta_new = self.inverse(theta_ori, sample_mask=valid)
-        force_new = self.compute_force(theta_new, self.train_beta, transformed=True)
+    def _force_multi_norm(self, force: torch.Tensor) -> torch.Tensor:
         volume = self.lattice_size * self.lattice_size
-        force_flat = force_new.reshape(force_new.shape[0], -1)
-        loss_per_config = (
+        force_flat = force.reshape(force.shape[0], -1)
+        return (
             torch.linalg.vector_norm(force_flat, ord=2, dim=1) / (volume**0.5)
             + torch.linalg.vector_norm(force_flat, ord=4, dim=1) / (volume**0.25)
             + torch.linalg.vector_norm(force_flat, ord=6, dim=1) / (volume ** (1 / 6))
             + torch.linalg.vector_norm(force_flat, ord=8, dim=1) / (volume ** (1 / 8))
         )
-        return (loss_per_config * valid.to(loss_per_config.dtype)).sum() / valid.sum().clamp_min(1)
+
+    def _edge_link_weight(self, theta: torch.Tensor) -> torch.Tensor:
+        alpha = float(self.hyperparams.get("edge_weight", 0.0))
+        if alpha == 0.0:
+            return torch.ones_like(theta)
+        delta = float(self.hyperparams.get("edge_delta", 0.0))
+        if delta > 0.0:
+            near_edge = regularize(theta).abs() >= (math.pi - delta)
+            return torch.where(near_edge, theta.new_full((), 1.0 + alpha), torch.ones_like(theta))
+        power = float(self.hyperparams.get("edge_power", 2.0))
+        frac = (1.0 - torch.cos(theta)) * 0.5
+        return 1.0 + alpha * frac.pow(power)
+
+    def _masked_mean(self, values: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
+        valid_float = valid.to(values.dtype)
+        return (values * valid_float).sum() / valid_float.sum().clamp_min(1)
+
+    def loss_fn(self, theta_ori: torch.Tensor, sample_mask: torch.Tensor | None = None) -> torch.Tensor:
+        objective, _ = self.loss_terms(theta_ori, sample_mask=sample_mask)
+        return objective
+
+    def loss_terms(
+        self,
+        theta_ori: torch.Tensor,
+        sample_mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.train_beta is None:
+            raise RuntimeError("train_beta is not set")
+        valid = torch.ones(theta_ori.shape[0], dtype=torch.bool, device=theta_ori.device) if sample_mask is None else sample_mask.bool()
+        theta_new = self.inverse(theta_ori, sample_mask=valid)
+        force_new = self.compute_force(theta_new, self.train_beta, transformed=True)
+        force_per_config = self._force_multi_norm(force_new)
+        alpha = float(self.hyperparams.get("edge_weight", 0.0))
+        if alpha == 0.0:
+            objective_per_config = force_per_config
+        else:
+            weight = self._edge_link_weight(theta_ori.detach())
+            objective_per_config = self._force_multi_norm(force_new * weight)
+        objective = self._masked_mean(objective_per_config, valid)
+        force_loss = self._masked_mean(force_per_config, valid)
+        return objective, force_loss
 
     def _maybe_log_inverse_diagnostics(
         self,
@@ -477,10 +517,38 @@ class FieldTransformation:
             f"round_trip_mean_abs_err={rt_err:.2e}"
         )
 
-    def train_step(self, theta_ori: torch.Tensor, sample_mask: torch.Tensor) -> tuple[float, int]:
+    def _maybe_log_edge_diagnostics(
+        self,
+        test_data: torch.Tensor,
+        batch_size: int,
+        epoch_display: int,
+        n_epochs: int,
+    ) -> None:
+        if float(self.hyperparams.get("edge_weight", 0.0)) == 0.0:
+            return
+        if self.fabric is not None and self.fabric.global_rank != 0:
+            return
+        n = min(8, int(test_data.shape[0]), int(batch_size))
+        if n <= 0:
+            return
+        probe = test_data[:n].to(self.device)
+        with torch.no_grad():
+            weight = self._edge_link_weight(probe)
+            wrapped = regularize(probe)
+            frac_015 = (wrapped.abs() >= (math.pi - 0.15)).float().mean().item()
+            frac_005 = (wrapped.abs() >= (math.pi - 0.05)).float().mean().item()
+        self.print(
+            f"Epoch {epoch_display}/{n_epochs} edge_diag: "
+            f"mean_weight={weight.mean().item():.4f} "
+            f"max_weight={weight.max().item():.4f} "
+            f"frac_|theta|>=pi-0.15={frac_015:.4f} "
+            f"frac_|theta|>=pi-0.05={frac_005:.4f}"
+        )
+
+    def train_step(self, theta_ori: torch.Tensor, sample_mask: torch.Tensor) -> tuple[float, float, int]:
         theta_ori = theta_ori.to(self.device)
         sample_mask = sample_mask.to(self.device)
-        loss = self.loss_fn(theta_ori, sample_mask)
+        loss, force_loss = self.loss_terms(theta_ori, sample_mask)
         local_count = sample_mask.sum().to(loss.dtype)
         global_count = self.fabric.all_reduce(local_count.detach(), reduce_op="sum") if self.fabric is not None else local_count
         world_size = int(self.fabric.world_size) if self.fabric is not None else 1
@@ -491,13 +559,13 @@ class FieldTransformation:
         self._clip_gradients()
         for optimizer in self.optimizers:
             optimizer.step()
-        return float(loss.detach().cpu()), int(local_count.detach().cpu())
+        return float(loss.detach().cpu()), float(force_loss.detach().cpu()), int(local_count.detach().cpu())
 
-    def evaluate_step(self, theta_ori: torch.Tensor, sample_mask: torch.Tensor) -> tuple[float, int]:
+    def evaluate_step(self, theta_ori: torch.Tensor, sample_mask: torch.Tensor) -> tuple[float, float, int]:
         theta_ori = theta_ori.to(self.device).requires_grad_(True)
         sample_mask = sample_mask.to(self.device)
-        loss = self.loss_fn(theta_ori, sample_mask)
-        return float(loss.detach().cpu()), int(sample_mask.sum().cpu())
+        loss, force_loss = self.loss_terms(theta_ori, sample_mask)
+        return float(loss.detach().cpu()), float(force_loss.detach().cpu()), int(sample_mask.sum().cpu())
 
     def train(self, train_data: torch.Tensor, test_data: torch.Tensor, train_beta: float, *, n_epochs: int, batch_size: int) -> None:
         self.train_beta = train_beta
@@ -512,38 +580,52 @@ class FieldTransformation:
 
         train_losses: list[float] = []
         test_losses: list[float] = []
+        train_force_losses: list[float] = []
+        test_force_losses: list[float] = []
         best_loss = float("inf")
 
         progress_disabled = self.fabric is not None and self.fabric.global_rank != 0
         for epoch in tqdm(range(n_epochs), desc="Training epochs", disable=progress_disabled):
             self._set_models_mode(True)
             epoch_losses = []
+            epoch_force_losses = []
             for batch, mask in fixed_batches(train_data, distributed_batch_size, shuffle=True, seed=epoch):
                 local, local_mask = local_batch(batch, mask, rank=rank, world_size=world_size)
-                epoch_losses.append(self.train_step(local, local_mask))
+                batch_loss, batch_force_loss, valid_count = self.train_step(local, local_mask)
+                epoch_losses.append((batch_loss, valid_count))
+                epoch_force_losses.append((batch_force_loss, valid_count))
             train_loss = self._global_weighted_epoch_loss(epoch_losses)
+            train_force_loss = self._global_weighted_epoch_loss(epoch_force_losses)
             train_losses.append(train_loss)
+            train_force_losses.append(train_force_loss)
 
             self._set_models_mode(False)
             test_epoch_losses = []
+            test_epoch_force_losses = []
             for batch, mask in fixed_batches(test_data, distributed_batch_size, shuffle=False, seed=0):
                 local, local_mask = local_batch(batch, mask, rank=rank, world_size=world_size)
-                test_epoch_losses.append(self.evaluate_step(local, local_mask))
+                batch_loss, batch_force_loss, valid_count = self.evaluate_step(local, local_mask)
+                test_epoch_losses.append((batch_loss, valid_count))
+                test_epoch_force_losses.append((batch_force_loss, valid_count))
             test_loss = self._global_weighted_epoch_loss(test_epoch_losses)
+            test_force_loss = self._global_weighted_epoch_loss(test_epoch_force_losses)
             test_losses.append(test_loss)
+            test_force_losses.append(test_force_loss)
 
             self.print(
                 f"Epoch {epoch + 1}/{n_epochs} - "
-                f"Train Loss: {train_loss:.6f} - Test Loss: {test_loss:.6f}"
+                f"Train Loss: {train_loss:.6f} - Test Loss: {test_loss:.6f} - "
+                f"Train Force Loss: {train_force_loss:.6f} - Test Force Loss: {test_force_loss:.6f}"
             )
             self._maybe_log_inverse_diagnostics(test_data, batch_size, epoch + 1, n_epochs)
+            self._maybe_log_edge_diagnostics(test_data, batch_size, epoch + 1, n_epochs)
             if test_loss < best_loss:
                 self.save_best_model(epoch, test_loss)
                 best_loss = test_loss
             for scheduler in self.schedulers:
                 scheduler.step(test_loss)
 
-        self.plot_training_history(train_losses, test_losses)
+        self.plot_training_history(train_losses, test_losses, train_force_losses, test_force_losses)
         if self.fabric is not None:
             self.fabric.barrier()
         self.load_best_model(train_beta)
@@ -629,7 +711,13 @@ class FieldTransformation:
                 scheduler.load_state_dict(checkpoint[key])
         self.print(f"Loaded best model from epoch {checkpoint['epoch'] + 1} with loss {checkpoint['loss']:.6f}")
 
-    def plot_training_history(self, train_losses: list[float], test_losses: list[float]) -> None:
+    def plot_training_history(
+        self,
+        train_losses: list[float],
+        test_losses: list[float],
+        train_force_losses: list[float] | None = None,
+        test_force_losses: list[float] | None = None,
+    ) -> None:
         if self.train_beta is None:
             raise RuntimeError("train_beta is not set")
         if self.fabric is not None and self.fabric.global_rank != 0:
@@ -652,3 +740,24 @@ class FieldTransformation:
 
         np.savetxt(self.dump_dir / f"train_loss_train_beta{beta_tag}_{self.save_tag}.csv", train_losses, fmt="%.6e")
         np.savetxt(self.dump_dir / f"test_loss_train_beta{beta_tag}_{self.save_tag}.csv", test_losses, fmt="%.6e")
+        if train_force_losses is not None and test_force_losses is not None:
+            plt.figure(figsize=(10, 5))
+            plt.plot(epochs_axis, train_force_losses, label="Train force")
+            plt.plot(np.arange(1, len(test_force_losses) + 1), test_force_losses, label="Test force")
+            plt.xlabel("Epoch")
+            plt.ylabel("Force loss")
+            plt.legend()
+            plt.grid(True)
+            plt.tight_layout()
+            plt.savefig(self.plot_dir / f"cnn_force_loss_train_beta{beta_tag}_{self.save_tag}.pdf", transparent=True)
+            plt.close()
+            np.savetxt(
+                self.dump_dir / f"train_force_loss_train_beta{beta_tag}_{self.save_tag}.csv",
+                train_force_losses,
+                fmt="%.6e",
+            )
+            np.savetxt(
+                self.dump_dir / f"test_force_loss_train_beta{beta_tag}_{self.save_tag}.csv",
+                test_force_losses,
+                fmt="%.6e",
+            )

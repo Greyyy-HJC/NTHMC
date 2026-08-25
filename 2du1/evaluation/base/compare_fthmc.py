@@ -47,6 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rand_seed", type=int, default=1331)
     parser.add_argument("--model_tag", type=str, default="base")
     parser.add_argument("--save_tag", type=str, required=True)
+    parser.add_argument("--output_dir", type=Path, default=None)
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "gpu", "cuda"])
     parser.add_argument("--no_tune_step_size", action="store_true")
     return parser.parse_args()
@@ -60,8 +61,9 @@ def main() -> None:
     script_dir = Path(__file__).resolve().parent
     domain_root = script_dir.parents[1]
     model_dir = domain_root / "artifacts" / "models"
-    plot_dir = script_dir / "plots"
-    dump_dir = script_dir / "dumps"
+    output_dir = args.output_dir.resolve() if args.output_dir is not None else script_dir
+    plot_dir = output_dir / "plots"
+    dump_dir = output_dir / "dumps"
     for directory in (plot_dir, dump_dir):
         directory.mkdir(parents=True, exist_ok=True)
 
