@@ -2,6 +2,32 @@
 
 This is an append-only development history for NTHMC.
 
+## 2026-09-09
+
+- Compiled therm/run extras in `HMCU2FT` / `HMCU1FT` (`jax.jit` of `forward` + plaquette, plus $Q$ in the run phase). Inverse is unchanged. Profiler `--dump_suffix` keeps the new dumps off the unjitted-extras baseline. GPU `jitobs` profiles: PBS 185109 (L16), 185114 (L32), 185115 (L64). Cancelled the CPU L16 job 185110. Report comparison is in [`presentation/2du2_cpu_gpu.ipynb`](presentation/2du2_cpu_gpu.ipynb).
+- check how many gpu kernels are used after jax compile
+	- JAX compiles one `metropolis_step` into a single XLA executable; that executable still launches many fused CUDA kernels (not counted with nsys). At the JAX-function level the step is 21 `force` + 2 `new_action`.
+- can we compile the graph across multiple gpus?
+	- Yes in principle (`pmap` / `shard_map` / `pjit`), but production eval is one Markov chain on one device. Splitting this graph across GPUs needs lattice sharding or independent chains; we have not done that.
+- compare the jax version of evaluation using gpu and cpu?
+	- See [`presentation/2du2_cpu_gpu.ipynb`](presentation/2du2_cpu_gpu.ipynb). GPU production time is flat through L64 (~3.8 h / 2048 configs): compiled FT step 1.42/1.35/1.28 s, Python extras ~4.5 s. CPU FT step 3.93/16.4/72.6 s (~4× per volume doubling); projected CPU total 5.7/13.5/48.7 h. GPU/CPU projected total 0.68/0.28/0.08. L64 AOT `fthmc_step` is 2.42 GFLOPS (0.012% of A100 19.5 TFLOPS FP32) and 4.85 GB/s (0.31% of 1555 GB/s HBM).
+- can we save and load the jax compiled graph?
+	- Yes. `jax.export` serializes StableHLO (still compiles on load); `jax.experimental.serialize_executable` pickles the compiled binary for the same GPU/runtime. The practical skip for the ~8 min first-step JIT on the same machine is the persistent compilation cache.
+- Started the GPU vs CPU JAX eval timing comparison. Profiler dumps now include a `gpu`/`cpu` filename suffix and host CPU model/core/RAM fields. CPU jobs go through [`2du2/evaluation/base_cpu/gen_sub.sh`](2du2/evaluation/base_cpu/gen_sub.sh) on a Sophia DGX A100 node (`by-node`): 2× AMD EPYC 7742, 128 physical cores / 256 SMT, ~1 TB RAM, with JAX using the 128 physical cores. L32/L64 GPU profiles reuse the L16 `base` checkpoint via [`presentation/2du2_bottleneck/gen_sub.sh`](presentation/2du2_bottleneck/gen_sub.sh). Report notebook: [`presentation/2du2_cpu_gpu.ipynb`](presentation/2du2_cpu_gpu.ipynb). Submitted CPU L16 (PBS 184819), CPU L32 (PBS 184820), GPU L32 (PBS 184821), GPU L64 (PBS 184908), and CPU L64 (PBS 184909). L64 dumps are in; GPU wall time is still ~3.8 h, CPU projected total is 48.7 h.
+- qex with nim
+
+## 2026-09-08
+
+- Started a 2du2 `base` FT-HMC inference bottleneck study against the production L16 β=10 seed-1107 eval log (Python total 14061 s, first-step JIT ~494 s, run ~6.0 s/config, vs HMC 145 s). Added [`presentation/2du2_bottleneck/profile_inference.py`](presentation/2du2_bottleneck/profile_inference.py) and a PBS generator that copies the `evaluation/base` XLA flags (`PREALLOCATE=false`, empty command buffers). Submitted production-remat replay as PBS 184789 and the same graph with `scan_checkpoint=False` as PBS 184790. Report notebook: [`presentation/2du2_bottleneck.ipynb`](presentation/2du2_bottleneck.ipynb).
+- PBS 184789 finished: first FT step 488 s, compiled `metropolis_step` 1.42 s, unjitted Python extras 4.56 s, projected 3.88 h vs log 3.91 h. Isolated `force` is 0.067 s ($21\times$ = 1.41 s). PBS 184790 (`scan_checkpoint=False`) compiled for ~51 min then died: `Can't pack device memory arguments array of size 1906` (XLA limit 1024). Removed the temporary `scan_checkpoint` flag from U(1)/U(2) field transforms; scans always use `jax.checkpoint`.
+- Clarified in [`presentation/2du2_bottleneck.ipynb`](presentation/2du2_bottleneck.ipynb) that one `fthmc_step` already contains 21 `force` + 2 `new_action`; isolated AOT kernels are attribution only.
+
+## 2026-08-26
+
+- output for xiao-yong: pytorch checkpoint, jax load, jax fthmc
+- try jax compiled.cost_analysis to find the bottleneck of inference
+- make sure we are optimizing sth can scale up to larger volume and 4D SU(3)
+- https://docs.jax.dev/en/latest/aot.html#tracing-with-static-arguments
 
 ## 2026-08-25
 

@@ -49,6 +49,8 @@ class HMCU2FT:
         self.tune_step_size_enabled = tune_step_size
         self.key = jax.random.PRNGKey(seed)
         self._compiled_step = None
+        self._compiled_therm_obs = None
+        self._compiled_run_obs = None
 
     def initialize(self) -> Array:
         return identity_field(self.lattice_size)
@@ -99,6 +101,28 @@ class HMCU2FT:
 
         return jax.jit(step)
 
+    def _make_observables(self, *, include_topology: bool):
+        transform = self.observable_field_transformation
+
+        def obs(links: Array):
+            links_ori = u2_normalize(transform(links))
+            plaq = plaquette_mean_from_field(links_ori)
+            if include_topology:
+                return links_ori, plaq, topology_from_field(links_ori)
+            return links_ori, plaq
+
+        return jax.jit(obs)
+
+    def therm_observables(self, links: Array) -> tuple[Array, Array]:
+        if self._compiled_therm_obs is None:
+            self._compiled_therm_obs = self._make_observables(include_topology=False)
+        return self._compiled_therm_obs(links)
+
+    def run_observables(self, links: Array) -> tuple[Array, Array, Array]:
+        if self._compiled_run_obs is None:
+            self._compiled_run_obs = self._make_observables(include_topology=True)
+        return self._compiled_run_obs(links)
+
     def _metropolis_step_at(self, links: Array, step_size: float) -> tuple[Array, bool, float]:
         if self._compiled_step is None:
             self._compiled_step = self._make_step()
@@ -138,8 +162,8 @@ class HMCU2FT:
         plaq_values: list[float] = []
         acceptance_count = 0
         for _ in tqdm(range(self.n_thermalization_steps), desc="Thermalizing FT-HMC"):
-            links_ori = u2_normalize(self.observable_field_transformation(links))
-            plaq_values.append(float(plaquette_mean_from_field(links_ori)))
+            _, plaq = self.therm_observables(links)
+            plaq_values.append(float(plaq))
             links, accepted, _ = self.metropolis_step(links)
             acceptance_count += int(accepted)
         return links, plaq_values, acceptance_count / max(self.n_thermalization_steps, 1)
@@ -154,10 +178,10 @@ class HMCU2FT:
             links, accepted, h = self.metropolis_step(links)
             acceptance_count += int(accepted)
             if index % store_interval == 0:
-                links_ori = u2_normalize(self.observable_field_transformation(links))
+                links_ori, plaq, topo = self.run_observables(links)
                 if save_config:
                     configs.append(links_ori)
-                plaq_values.append(float(plaquette_mean_from_field(links_ori)))
+                plaq_values.append(float(plaq))
                 hamiltonians.append(h)
-                topological_charges.append(float(topology_from_field(links_ori)))
+                topological_charges.append(float(topo))
         return configs, plaq_values, acceptance_count / max(n_iterations, 1), topological_charges, hamiltonians

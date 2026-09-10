@@ -119,6 +119,8 @@ class HMCU1FT:
         self.compute_jac_logdet = compute_jac_logdet
         self.key = jax.random.PRNGKey(seed)
         self._compiled_step = None
+        self._compiled_therm_obs = None
+        self._compiled_run_obs = None
         self.tune_step_size_enabled = tune_step_size
 
     def initialize(self) -> Array:
@@ -164,6 +166,28 @@ class HMCU1FT:
 
         return jax.jit(step)
 
+    def _make_observables(self, *, include_topology: bool):
+        transform = self.observable_field_transformation
+
+        def obs(theta: Array):
+            theta_ori = regularize(transform(theta))
+            plaq = plaq_mean_from_field(theta_ori)
+            if include_topology:
+                return theta_ori, plaq, topo_from_field(theta_ori)
+            return theta_ori, plaq
+
+        return jax.jit(obs)
+
+    def therm_observables(self, theta: Array) -> tuple[Array, Array]:
+        if self._compiled_therm_obs is None:
+            self._compiled_therm_obs = self._make_observables(include_topology=False)
+        return self._compiled_therm_obs(theta)
+
+    def run_observables(self, theta: Array) -> tuple[Array, Array, Array]:
+        if self._compiled_run_obs is None:
+            self._compiled_run_obs = self._make_observables(include_topology=True)
+        return self._compiled_run_obs(theta)
+
     def _metropolis_step_at(self, theta: Array, step_size: float) -> tuple[Array, bool, float]:
         if self._compiled_step is None:
             self._compiled_step = self._make_step()
@@ -203,8 +227,8 @@ class HMCU1FT:
         plaq_values: list[float] = []
         acceptance_count = 0
         for _ in tqdm(range(self.n_thermalization_steps), desc="Thermalizing FT-HMC"):
-            theta_ori = regularize(self.observable_field_transformation(theta))
-            plaq_values.append(float(plaq_mean_from_field(theta_ori)))
+            _, plaq = self.therm_observables(theta)
+            plaq_values.append(float(plaq))
             theta, accepted, _ = self.metropolis_step(theta)
             acceptance_count += int(accepted)
         return theta, plaq_values, acceptance_count / max(self.n_thermalization_steps, 1)
@@ -219,10 +243,10 @@ class HMCU1FT:
             theta, accepted, h = self.metropolis_step(theta)
             acceptance_count += int(accepted)
             if index % store_interval == 0:
-                theta_ori = regularize(self.observable_field_transformation(theta))
+                theta_ori, plaq, topo = self.run_observables(theta)
                 if save_config:
                     configs.append(theta_ori)
-                plaq_values.append(float(plaq_mean_from_field(theta_ori)))
+                plaq_values.append(float(plaq))
                 hamiltonians.append(h)
-                topological_charges.append(float(topo_from_field(theta_ori)))
+                topological_charges.append(float(topo))
         return configs, plaq_values, acceptance_count / max(n_iterations, 1), topological_charges, hamiltonians
