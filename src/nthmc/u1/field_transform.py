@@ -342,7 +342,7 @@ class FieldTransformation:
     def inverse_field_transformation(self, theta: Array) -> Array:
         return self.inverse(jnp.asarray(theta)[jnp.newaxis, ...])[0]
 
-    def compute_jac_logdet_with_params(self, params: Params, theta: Array) -> Array:
+    def forward_and_jac_logdet_with_params(self, params: Params, theta: Array) -> tuple[Array, Array]:
         subset_params = self._stack_subset_params(params)
 
         def accumulate(carry: tuple[Array, Array], inputs: tuple[Params, Array, Array, Array]):
@@ -359,11 +359,15 @@ class FieldTransformation:
             )
             return (theta_curr, log_det), None
 
-        (_, log_det), _ = jax.lax.scan(
+        (theta_out, log_det), _ = jax.lax.scan(
             jax.checkpoint(accumulate, prevent_cse=False),
             (theta, jnp.zeros(theta.shape[0], dtype=theta.dtype)),
             (subset_params, self._field_masks, self._plaq_masks, self._rect_masks),
         )
+        return theta_out, log_det
+
+    def compute_jac_logdet_with_params(self, params: Params, theta: Array) -> Array:
+        _, log_det = self.forward_and_jac_logdet_with_params(params, theta)
         return log_det
 
     def compute_jac_logdet_autodiff_with_params(self, params: Params, theta: Array) -> Array:
@@ -403,9 +407,17 @@ class FieldTransformation:
     def compute_jac_logdet(self, theta: Array) -> Array:
         return self.compute_jac_logdet_with_params(self.params, jnp.asarray(theta))
 
+    def forward_and_jac_logdet(self, theta: Array) -> tuple[Array, Array]:
+        theta_out, logdet = self.forward_and_jac_logdet_with_params(
+            self.params, jnp.asarray(theta)[jnp.newaxis, ...]
+        )
+        return theta_out[0], logdet[0]
+
     def new_action_with_params(self, params: Params, theta_new: Array, beta: float) -> Array:
-        theta_ori = self.forward_with_params(params, theta_new[jnp.newaxis, ...])[0]
-        return action(theta_ori, beta) - self.compute_jac_logdet_with_params(params, theta_new[jnp.newaxis, ...])[0]
+        theta_ori, jac_logdet = self.forward_and_jac_logdet_with_params(
+            params, theta_new[jnp.newaxis, ...]
+        )
+        return action(theta_ori[0], beta) - jac_logdet[0]
 
     def compute_force(self, theta: Array, beta: float, *, transformed: bool = False) -> Array:
         if transformed:

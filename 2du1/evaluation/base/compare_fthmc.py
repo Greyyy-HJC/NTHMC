@@ -100,6 +100,7 @@ def main() -> None:
         field_transformation=field_transform.field_transformation,
         compute_jac_logdet=field_transform.compute_jac_logdet,
         observable_field_transformation=field_transform.field_transformation,
+        forward_and_jac_logdet=field_transform.forward_and_jac_logdet,
         device=device,
         tune_step_size=not args.no_tune_step_size,
         seed=args.rand_seed,

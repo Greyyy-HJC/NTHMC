@@ -32,11 +32,14 @@ def test_u1_field_transform_near_identity_and_jac() -> None:
     theta = 0.1 * jax.random.normal(jax.random.PRNGKey(3), (2, 2, 2))
     transformed = transform.field_transformation(theta)
     logdet = transform.compute_jac_logdet(theta[jnp.newaxis, ...])
+    fused_field, fused_logdet = transform.forward_and_jac_logdet(theta)
     assert transformed.shape == theta.shape
     assert np.allclose(np.asarray(transformed), np.asarray(theta))
     assert logdet.shape == (1,)
     assert np.allclose(np.asarray(logdet), 0.0)
     assert jnp.isfinite(logdet).all()
+    assert np.allclose(np.asarray(fused_field), np.asarray(transformed))
+    assert np.allclose(np.asarray(fused_logdet), np.asarray(logdet[0]))
 
 
 def test_u1_inverse_uses_tolerance_diagnostics() -> None:
@@ -49,7 +52,10 @@ def test_u1_inverse_uses_tolerance_diagnostics() -> None:
 
     theta = 0.05 * jax.random.normal(jax.random.PRNGKey(6), (1, 2, 2, 2))
     transformed = transform.forward_with_params(transform.params, theta)
+    fused_field, _ = transform.forward_and_jac_logdet_with_params(transform.params, theta)
     inverted, diagnostics = transform.inverse(transformed, max_iter=8, tol=1e-5, return_diagnostics=True)
+
+    assert np.allclose(np.asarray(fused_field), np.asarray(transformed), atol=1e-5)
 
     assert np.allclose(np.asarray(transform.forward_with_params(transform.params, inverted)), np.asarray(transformed), atol=1e-4)
     assert float(diagnostics["max_final_diff"]) < 1e-5

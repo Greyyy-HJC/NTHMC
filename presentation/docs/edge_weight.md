@@ -7,10 +7,12 @@ training loss concentrates on them. The architecture remains production
 `base`. Only the PyTorch training objective changes. JAX FT-HMC evaluation is
 unchanged.
 
-The comparison workspace is [`2du1/evaluation/edge/`](../../2du1/evaluation/edge/).
+The comparison workspace is archived locally under gitignored
+[`temp/2du1/evaluation/edge/`](../../temp/2du1/evaluation/edge/).
 Production [`2du1/evaluation/base/`](../../2du1/evaluation/base/) dumps at
-\(\beta=3.0\) are not overwritten. The result notebook is
-[`presentation/2du1_edge_weight.ipynb`](../2du1_edge_weight.ipynb).
+\(\beta=3.0\) were not overwritten. The result notebook is
+[`temp/presentation/2du1_edge_weight.ipynb`](../../temp/presentation/2du1_edge_weight.ipynb);
+plots are under `temp/presentation/plots/`.
 
 ## Objective
 
@@ -177,5 +179,5 @@ FT-HMC (8/8). Extra-beta eight-seed FT-HMC was not justified by the win rule.
 Eight-seed β=3 FT-HMC (2048 configs) finds no useful topology gain versus
 production `base`. Smooth weights are consistent with `base`. `h15` trades a
 small \(R_\gamma\) excess for a significant \(R_{\Delta Q}\) loss. Default
-training remains unweighted (`edge_weight=0`). See
-[`presentation/2du1_edge_weight.ipynb`](../2du1_edge_weight.ipynb).
+training remains unweighted (`edge_weight=0`). See the archived notebook
+[`temp/presentation/2du1_edge_weight.ipynb`](../../temp/presentation/2du1_edge_weight.ipynb).

@@ -651,7 +651,7 @@ class FieldTransformation:
         delta = delta * link_mask
         return plaq_coeffs, rect_coeffs, delta
 
-    def compute_jac_logdet_with_params(self, params: Params, links: Array) -> Array:
+    def forward_and_jac_logdet_with_params(self, params: Params, links: Array) -> tuple[Array, Array]:
         subset_params = self._stack_subset_params(params)
 
         def accumulate(carry: tuple[Array, Array], inputs: tuple[Params, Array, Array, Array]):
@@ -673,11 +673,15 @@ class FieldTransformation:
             links_curr = u2_normalize(u2_mul(u2_exp(delta), links_curr))
             return (links_curr, logdet), None
 
-        (_, logdet), _ = jax.lax.scan(
+        (links_out, logdet), _ = jax.lax.scan(
             jax.checkpoint(accumulate, prevent_cse=False),
             (u2_normalize(links), jnp.zeros((links.shape[0],), dtype=links.dtype)),
             (subset_params, self._link_masks, self._plaq_masks, self._rect_masks),
         )
+        return u2_normalize(links_out), logdet
+
+    def compute_jac_logdet_with_params(self, params: Params, links: Array) -> Array:
+        _, logdet = self.forward_and_jac_logdet_with_params(params, links)
         return logdet
 
     def compute_jac_logdet_autodiff_with_params(self, params: Params, links: Array) -> Array:
@@ -720,10 +724,17 @@ class FieldTransformation:
     def compute_jac_logdet(self, links: Array) -> Array:
         return self.compute_jac_logdet_with_params(self.params, jnp.asarray(links))
 
+    def forward_and_jac_logdet(self, links: Array) -> tuple[Array, Array]:
+        links_out, logdet = self.forward_and_jac_logdet_with_params(
+            self.params, jnp.asarray(links)[jnp.newaxis, ...]
+        )
+        return links_out[0], logdet[0]
+
     def new_action_with_params(self, params: Params, links_new: Array, beta: float) -> Array:
-        links_ori = self.forward_with_params(params, links_new[jnp.newaxis, ...])[0]
-        jac_logdet = self.compute_jac_logdet_with_params(params, links_new[jnp.newaxis, ...])[0]
-        return action_from_field(links_ori, beta) - jac_logdet
+        links_ori, jac_logdet = self.forward_and_jac_logdet_with_params(
+            params, links_new[jnp.newaxis, ...]
+        )
+        return action_from_field(links_ori[0], beta) - jac_logdet[0]
 
     def compute_force(self, links: Array, beta: float, *, transformed: bool = False) -> Array:
         if transformed:

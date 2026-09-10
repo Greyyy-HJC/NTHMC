@@ -2,6 +2,11 @@
 
 This is an append-only development history for NTHMC.
 
+## 2026-09-10
+
+- Fused the Jacobian-scan transformed field into `new_action` / `force` for U(1) and U(2). Observables still use the cheap `forward` scan. Profiler `--dump_suffix=fusejac` jobs compare isolated `force` and compiled `fthmc_step` against the `jitobs` extras-JIT baseline. GPU jobs: PBS 185168 (L16), 185169 (L32), 185170 (L64). Report notebook: [`presentation/2du2_fuse_jac.ipynb`](presentation/2du2_fuse_jac.ipynb).
+- Refreshed [`presentation/jax_optimization.ipynb`](presentation/jax_optimization.ipynb): kernel glossary, table captions, no `|` inside markdown math, current-JAX columns for U(1) and U(2). Submitted U(1) GPU fusejac profiles PBS 185303 (L16) / 185304 (L32) and U(2) CPU fusejac PBS 185300–185302.
+
 ## 2026-09-09
 
 - Compiled therm/run extras in `HMCU2FT` / `HMCU1FT` (`jax.jit` of `forward` + plaquette, plus $Q$ in the run phase). Inverse is unchanged. Profiler `--dump_suffix` keeps the new dumps off the unjitted-extras baseline. GPU `jitobs` profiles: PBS 185109 (L16), 185114 (L32), 185115 (L64). Cancelled the CPU L16 job 185110. Report comparison is in [`presentation/2du2_cpu_gpu.ipynb`](presentation/2du2_cpu_gpu.ipynb).

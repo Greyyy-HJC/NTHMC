@@ -30,9 +30,9 @@ src/nthmc/core/               # Shared runtime, checkpoint, plotting, and traini
 src/nthmc/u1/                 # U(1) JAX runtime and PyTorch training implementation
 src/nthmc/u2/                 # U(2) JAX runtime and PyTorch training implementation
 tests/                        # Focused CPU-default tests
-presentation/                 # Scaling and experiment notebooks
+presentation/                 # Scaling notebooks and JAX eval timing tables
 presentation/docs/            # Field-transform derivation and reference material
-presentation/jax_benchmark/   # Archived full-pipeline benchmark evidence
+presentation/jax_optimization/  # Timing CSVs and inference-profile dumps
 ```
 
 Both physics workspaces use the same active structure:
@@ -43,7 +43,6 @@ gauge_generation/{generate.py,gen_sub.sh,dumps,logs,plots,scripts}
 model_training/{train.py,gen_sub.sh,dumps,logs,plots,scripts}
 evaluation/base/{compare_fthmc.py,gen_sub.sh,dumps,logs,plots,scripts}
 evaluation/hmc/{compare_hmc.py,gen_sub.sh,dumps,logs,plots,scripts}
-evaluation/<variant>/   # optional feature tests, e.g. 2du1/evaluation/edge
 artifacts/models/
 scripts/run_scaling.sh
 ```
@@ -121,9 +120,7 @@ Checkpoint filenames and metadata include `model_tag`. Training continuation pre
 
 ## Benchmarks and Documentation
 
-- [`presentation/jax_benchmark/jax_benchmark_summary.md`](presentation/jax_benchmark/jax_benchmark_summary.md) summarizes the final U(1)/U(2) historical-vs-current pipelines.
-- Each benchmark directory contains final logs/dumps, provenance, checksums, and a
-  `summarize.py` script that regenerates its summary and timing CSV.
+- [`presentation/jax_optimization.ipynb`](presentation/jax_optimization.ipynb) is the table-only JAX eval report (PyTorch vs JAX stages, GPU kernels/FLOPs, CPU vs GPU). Evidence lives in [`presentation/jax_optimization/dumps/`](presentation/jax_optimization/dumps/).
 - [`presentation/docs/alignment.md`](presentation/docs/alignment.md) records the U(2) topology-alignment rejection and the adopted phase-topology mobility term.
-- [`presentation/docs/edge_weight.md`](presentation/docs/edge_weight.md) records the U(1) large-angle / edge-link weighting experiment (`2du1/evaluation/edge`). The result notebook is [`presentation/2du1_edge_weight.ipynb`](presentation/2du1_edge_weight.ipynb).
+- [`presentation/docs/edge_weight.md`](presentation/docs/edge_weight.md) records the U(1) large-angle / edge-link weighting experiment. The finished workspace is archived locally under gitignored `temp/`.
 - [`presentation/docs/Field_transform.html`](presentation/docs/Field_transform.html) is the browser-friendly field-transform derivation.

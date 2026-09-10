@@ -44,7 +44,6 @@ temp/
 2du2/evaluation/force_loss_diag/
 
 # Regenerated per-job comparison / dual-loss plots; CSV/JSON dumps stay tracked
-2du1/evaluation/edge/plots/comparison_*.pdf
 2du1/evaluation/base/plots/comparison_fthmc_L16_beta4.0*.pdf
 2du1/evaluation/base/plots/comparison_fthmc_L16_beta5.0*.pdf
 2du1/evaluation/hmc/plots/comparison_hmc_L16_beta4.0*.pdf

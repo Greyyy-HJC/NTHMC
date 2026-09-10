@@ -50,10 +50,13 @@ def test_u2_nontrivial_field_transform_analytic_jacobian() -> None:
     links = u2_exp(0.03 * jax.random.normal(jax.random.PRNGKey(3), (1, 2, 2, 2, 4)))
     transformed = transform.forward_with_params(transform.params, links)
     logdet = transform.compute_jac_logdet_with_params(transform.params, links)
+    fused_field, fused_logdet = transform.forward_and_jac_logdet_with_params(transform.params, links)
     inverted, diagnostics = transform.inverse(transformed, max_iter=8, tol=1e-4, return_diagnostics=True)
 
     assert not np.allclose(np.asarray(transformed), np.asarray(links))
     assert np.all(np.isfinite(np.asarray(logdet)))
+    assert np.allclose(np.asarray(fused_field), np.asarray(transformed), atol=1e-5)
+    assert np.allclose(np.asarray(fused_logdet), np.asarray(logdet), atol=1e-5)
     assert np.allclose(np.asarray(transform.forward_with_params(transform.params, inverted)), np.asarray(transformed), atol=1e-4)
     assert float(diagnostics["max_final_diff"]) < 1e-4
     assert 0 < float(diagnostics["mean_iterations"]) <= 8
