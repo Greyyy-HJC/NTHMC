@@ -2,6 +2,22 @@
 
 This is an append-only development history for NTHMC.
 
+## 2026-09-15
+
+- check the memory usage of the current jax version for 2d U2, memory_stats() of jax.device
+- try the training on L32 U2 (potentially think of the optimization of the training)
+- try to compile the inverse inside the iteration loop
+- full pipeline for L32/64/128 U2
+- check the precision for current version
+- Removed the two-scan `new_action` fallback from `HMCU1FT` / `HMCU2FT`. FT-HMC now always uses `forward_and_jac_logdet`.
+
+https://docs.jax.dev/en/latest/_autosummary/jax.Device.html
+jax.profiler
+
+jax loop? for compiled graph?
+
+lax.while_loop
+
 ## 2026-09-10
 
 - Fused the Jacobian-scan transformed field into `new_action` / `force` for U(1) and U(2). Observables still use the cheap `forward` scan. Profiler `--dump_suffix=fusejac` jobs compare isolated `force` and compiled `fthmc_step` against the `jitobs` extras-JIT baseline. GPU jobs: PBS 185168 (L16), 185169 (L32), 185170 (L64). Report notebook: [`presentation/2du2_fuse_jac.ipynb`](presentation/2du2_fuse_jac.ipynb).

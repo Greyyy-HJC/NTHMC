@@ -30,7 +30,7 @@ def make_u1_fthmc(*, tune: bool = True, thermalization: int = 0):
         1,
         0.2,
         field_transformation=lambda field: field,
-        compute_jac_logdet=lambda batch: jnp.zeros(batch.shape[0]),
+        forward_and_jac_logdet=lambda field: (field, jnp.zeros((), dtype=field.dtype)),
         tune_step_size=tune,
     )
 
@@ -43,7 +43,7 @@ def make_u2_fthmc(*, tune: bool = True, thermalization: int = 0):
         1,
         0.2,
         field_transformation=lambda field: field,
-        compute_jac_logdet=lambda batch: jnp.zeros(batch.shape[0]),
+        forward_and_jac_logdet=lambda field: (field, jnp.zeros((), dtype=field.dtype)),
         tune_step_size=tune,
     )
 

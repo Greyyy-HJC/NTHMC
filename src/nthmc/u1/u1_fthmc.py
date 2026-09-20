@@ -103,9 +103,8 @@ class HMCU1FT:
         step_size: float,
         *,
         field_transformation,
-        compute_jac_logdet,
+        forward_and_jac_logdet,
         observable_field_transformation=None,
-        forward_and_jac_logdet=None,
         device: str = "cpu",
         tune_step_size: bool = True,
         seed: int = 0,
@@ -117,7 +116,6 @@ class HMCU1FT:
         self.dt = float(step_size)
         self.field_transformation = field_transformation
         self.observable_field_transformation = observable_field_transformation or field_transformation
-        self.compute_jac_logdet = compute_jac_logdet
         self.forward_and_jac_logdet = forward_and_jac_logdet
         self.key = jax.random.PRNGKey(seed)
         self._compiled_step = None
@@ -132,11 +130,8 @@ class HMCU1FT:
         return action(theta, self.beta)
 
     def new_action(self, theta_new: Array) -> Array:
-        if self.forward_and_jac_logdet is not None:
-            theta_ori, logdet = self.forward_and_jac_logdet(theta_new)
-            return self.original_action(theta_ori) - logdet
-        theta_ori = self.field_transformation(theta_new)
-        return self.original_action(theta_ori) - self.compute_jac_logdet(theta_new[jnp.newaxis, ...])[0]
+        theta_ori, logdet = self.forward_and_jac_logdet(theta_new)
+        return self.original_action(theta_ori) - logdet
 
     def new_force(self, theta_new: Array) -> Array:
         return jax.grad(self.new_action)(theta_new)

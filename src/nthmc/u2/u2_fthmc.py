@@ -32,9 +32,8 @@ class HMCU2FT:
         step_size: float,
         *,
         field_transformation,
-        compute_jac_logdet,
+        forward_and_jac_logdet,
         observable_field_transformation=None,
-        forward_and_jac_logdet=None,
         device: str = "cpu",
         tune_step_size: bool = True,
         seed: int = 0,
@@ -46,7 +45,6 @@ class HMCU2FT:
         self.dt = float(step_size)
         self.field_transformation = field_transformation
         self.observable_field_transformation = observable_field_transformation or field_transformation
-        self.compute_jac_logdet = compute_jac_logdet
         self.forward_and_jac_logdet = forward_and_jac_logdet
         self.tune_step_size_enabled = tune_step_size
         self.key = jax.random.PRNGKey(seed)
@@ -61,11 +59,8 @@ class HMCU2FT:
         return action_from_field(links, self.beta)
 
     def new_action(self, links_new: Array) -> Array:
-        if self.forward_and_jac_logdet is not None:
-            links_ori, logdet = self.forward_and_jac_logdet(links_new)
-            return self.original_action(links_ori) - logdet
-        links_ori = self.field_transformation(links_new)
-        return self.original_action(links_ori) - self.compute_jac_logdet(links_new[jnp.newaxis, ...])[0]
+        links_ori, logdet = self.forward_and_jac_logdet(links_new)
+        return self.original_action(links_ori) - logdet
 
     def _make_step(self):
         n_steps = self.n_steps
