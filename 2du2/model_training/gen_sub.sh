@@ -138,6 +138,12 @@ if [[ "\${torch_visible}" -ne ${gpu_count} ]]; then
     echo "Expected Torch to see ${gpu_count} GPUs, found \${torch_visible}; refusing an unsafe allocation" >&2
     exit 99
 fi
+gpu_used_mb=\$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | awk '{if (\$1+0 > max) max=\$1+0} END {print max+0}')
+if [[ "\${gpu_used_mb}" -gt 256 ]]; then
+    echo "Assigned GPU already has \${gpu_used_mb} MiB in use; refusing overlapping allocation" >&2
+    nvidia-smi
+    exit 99
+fi
 nvcc --version
 date '+Start time: %Y-%m-%d %H:%M:%S'
 export PYTHONPATH=${REPO_ROOT}/src:${REPO_ROOT}

@@ -2,6 +2,21 @@
 
 This is an append-only development history for NTHMC.
 
+## 2026-09-24
+
+- L128 HMC eval 187593 died on CUDA-graph instantiation OOM, not lattice HBM. Matched the FT-HMC XLA flags (`PREALLOCATE=false`, empty command buffers) in `2du2/evaluation/hmc/gen_sub.sh` and resubmitted PBS 188254 on one GPU. Two-GPU memory pooling would not fix this error; L128 FT-HMC 187595 already finished on one GPU with those flags.
+- Started the 2du2 `base` scaling campaign: retrain at L=32 β=14 with eight seeds, evaluate HMC and FT-HMC at L=32/64/128 and β=14/16/18/20. Regenerated L32 β=14 gauges with `store_interval=50` (PBS 188257). Eight training jobs 188258–188265 depend on that gauge (`BATCH_SIZE=16`). `by-gpu` allows 20 queued jobs, so HMC (96) and FT-HMC (96, `TUNE_STEP_SIZE=true`, L32 checkpoints) are drip-submitted as slots free. Updated `presentation/2du2_scaling.ipynb` to this grid.
+- First scaling wave: gauge 188257 succeeded. Training 4/8 ok (1029/1107/1984/2008); seed 1331 OOM'd on overlapping GPUs; seeds 1999/2017/2025 sat in `queue_tags` because held 2 h FT-HMC filled the 20-job cap. HMC 86/96 dumps; 10 jobs were killed mid-run. FT-HMC with step-size tuning needs ~2 h on L32, so the 2 h walltime killed most evals (exit 143/-29). Cleared the held FT-HMC, added a GPU-occupancy guard in `2du2/model_training/gen_sub.sh`, resubmitted trains 189055–189058 and the 10 missing HMC, and regenerated FT-HMC scripts at 4 h (L32/L64) / 6 h (L128).
+- Train retries 189055–189058 all exited 99: PBS requested `ngpus=4` but packed four 4-GPU jobs onto `sophia-gpu-07` where the cgroup only exposed one already-busy GPU. Dependent FT-HMC were deleted. Resubmitted those four seeds on exclusive `by-node` (full 8-GPU DGX, PBS 189148–189151).
+- By 2026-09-26 the eight L32 β=14 checkpoints and all 96 HMC dumps were in. FT-HMC was 36/96: some runs were SIGTERM'd mid-chain on a shared node, and others died on the walltime after step-size tuning plus thermalization (L32 β=16 seed 2008 at 57% of the production chain, 4 h; L128 β=20 seed 1029 at 55%, 6 h). Regenerated the remaining FT-HMC scripts at 8 h (L32/L64) and 12 h (L128).
+- Stopped the in-flight tuned FT-HMC jobs. Step size is now a separate probe (`tune_ft_step.py`, 200 Metropolis steps per attempt, seed 1029, one job per L and β). Production FT-HMC reads that step and runs with `--no_tune_step_size`. Completed topology dumps are kept.
+
+## 2026-09-20
+
+- Started a 2du2 `base` L=32 β=14 seed-1029 pipeline: gauge generation PBS 187330 (1 h), independent HMC eval PBS 187333 (1 h), training PBS 187331 after gauge, FT-HMC PBS 187332 after training. `2du2` gauge and HMC `gen_sub.sh` now accept the same env-var overrides as training / FT-HMC.
+- Gauge 187330 and HMC eval 187333 succeeded. Training 187331 OOM'd on L32 with per-rank batch 64; resubmitted training PBS 187345 at `BATCH_SIZE=16` and FT-HMC PBS 187346 after that job.
+- Submitted L64/L128 β=14 seed-1029 HMC and base FT-HMC, reusing the L32 `base` checkpoint: HMC PBS 187592 (L64, 1 h) / 187593 (L128, 1 h); FT-HMC PBS 187594 (L64, 2 h) / 187595 (L128, 4 h). `evaluation/base/gen_sub.sh` now accepts `TRAIN_LATTICE_SIZE` so a smaller-L checkpoint can be evaluated on a larger lattice.
+
 ## 2026-09-15
 
 - check the memory usage of the current jax version for 2d U2, memory_stats() of jax.device

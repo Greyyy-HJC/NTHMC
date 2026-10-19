@@ -3,17 +3,18 @@ set -euo pipefail
 
 # Experiment settings. Keep beta in canonical float form (for example, "10.0")
 # because it is also used in generated filenames.
-lattice_size=16
-beta="10.0"
-n_thermalization=2000
-store_interval=25
-n_configs=4096
-n_steps=10
-step_size="0.15"
-n_tune_steps=2000
-max_lag=64
-rand_seed=1331
-tune_step_size=true
+lattice_size="${LATTICE_SIZE:-16}"
+beta="${BETA:-10.0}"
+n_thermalization="${N_THERMALIZATION:-2000}"
+store_interval="${STORE_INTERVAL:-25}"
+n_configs="${N_CONFIGS:-4096}"
+n_steps="${N_STEPS:-10}"
+step_size="${STEP_SIZE:-0.15}"
+n_tune_steps="${N_TUNE_STEPS:-2000}"
+max_lag="${MAX_LAG:-64}"
+rand_seed="${RAND_SEED:-1331}"
+tune_step_size="${TUNE_STEP_SIZE:-true}"
+walltime="${WALLTIME:-02:00:00}"
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd -- "${SCRIPT_DIR}/../.." && pwd)
@@ -36,7 +37,7 @@ cat > "${script_path}" <<EOF
 #PBS -l filesystems=home:eagle
 #PBS -q by-gpu
 #PBS -j oe
-#PBS -l walltime=02:00:00
+#PBS -l walltime=${walltime}
 #PBS -o ${SCRIPT_DIR}/logs/gauge_L${lattice_size}_b${beta}_${rand_seed}.log
 
 set -euo pipefail

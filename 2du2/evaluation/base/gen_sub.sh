@@ -6,6 +6,7 @@ set -euo pipefail
 lattice_size="${LATTICE_SIZE:-16}"
 model_tag="${MODEL_TAG:-base}"
 train_beta="${TRAIN_BETA:-10.0}"
+train_lattice="${TRAIN_LATTICE_SIZE:-${lattice_size}}"
 n_configs="${N_CONFIGS:-2048}"
 n_thermalization="${N_THERMALIZATION:-200}"
 n_steps="${N_STEPS:-10}"
@@ -13,6 +14,7 @@ ft_step_size="${FT_STEP_SIZE:-0.10}"
 n_tune_steps="${N_TUNE_STEPS:-1000}"
 max_lag="${MAX_LAG:-64}"
 tune_step_size="${TUNE_STEP_SIZE:-false}"
+step_seed="${STEP_SEED:-}"
 walltime="${WALLTIME:-06:00:00}"
 read -r -a evaluate_betas <<< "${EVALUATE_BETAS:-10.0 12.0 14.0 16.0}"
 read -r -a seeds <<< "${SEEDS:-1029 1107 1331 1984 1999 2008 2017 2025}"
@@ -25,6 +27,9 @@ if [[ ! "${model_tag}" =~ ^[A-Za-z0-9._-]+$ ]]; then
     echo "model_tag must contain only letters, numbers, dots, underscores, or hyphens" >&2
     exit 1
 fi
+if [[ -n "${step_seed}" ]]; then
+    tune_step_size="false"
+fi
 case "${tune_step_size}" in
     true) tune_flag_line="" ;;
     false) tune_flag_line="    --no_tune_step_size \\"$'\n' ;;
@@ -32,7 +37,7 @@ case "${tune_step_size}" in
 esac
 
 for seed in "${seeds[@]}"; do
-    save_tag="${model_tag}_train_b${train_beta}_L${lattice_size}_${seed}"
+    save_tag="${model_tag}_train_b${train_beta}_L${train_lattice}_${seed}"
     checkpoint="${MODEL_DIR}/best_model_train_beta${train_beta}_${save_tag}.npz"
     if [[ ! -f "${checkpoint}" && "${GENERATE_ONLY:-0}" != "1" ]]; then
         echo "Missing U(2) checkpoint: ${checkpoint}" >&2
@@ -48,10 +53,25 @@ generated_scripts=()
 for evaluate_beta in "${evaluate_betas[@]}"; do
     job_beta="${evaluate_beta%%.*}"
     for seed in "${seeds[@]}"; do
-        save_tag="${model_tag}_train_b${train_beta}_L${lattice_size}_${seed}"
+        save_tag="${model_tag}_train_b${train_beta}_L${train_lattice}_${seed}"
         run_tag="${model_tag}_L${lattice_size}_train_b${train_beta}_eval_b${evaluate_beta}_${seed}"
         script_path="${SCRIPT_DIR}/scripts/sub_fthmc_${run_tag}.sh"
         generated_scripts+=("${script_path}")
+        step_preamble=""
+        step_value="${ft_step_size}"
+        if [[ -n "${step_seed}" ]]; then
+            step_preamble=$(cat <<PRE
+step_file=${SCRIPT_DIR}/dumps/ft_step_L${lattice_size}_beta${evaluate_beta}_s${step_seed}.txt
+if [[ ! -s "\${step_file}" ]]; then
+    echo "Missing tuned FT step file \${step_file}" >&2
+    exit 1
+fi
+ft_step=\$(tr -d '[:space:]' < "\${step_file}")
+echo ">>> Fixed FT step size \${ft_step} from \${step_file}"
+PRE
+)
+            step_value='${ft_step}'
+        fi
         cat > "${script_path}" <<EOF
 #!/bin/bash -l
 
@@ -78,7 +98,7 @@ export OPENBLAS_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XLA_FLAGS="--xla_gpu_enable_command_buffer="
-
+${step_preamble}
 ${REPO_ROOT}/.venv/bin/python compare_fthmc.py \\
     --lattice_size ${lattice_size} \\
     --beta ${evaluate_beta} \\
@@ -86,7 +106,7 @@ ${REPO_ROOT}/.venv/bin/python compare_fthmc.py \\
     --n_configs ${n_configs} \\
     --n_thermalization ${n_thermalization} \\
     --n_steps ${n_steps} \\
-    --ft_step_size ${ft_step_size} \\
+    --ft_step_size ${step_value} \\
     --n_tune_steps ${n_tune_steps} \\
     --max_lag ${max_lag} \\
     --rand_seed ${seed} \\
